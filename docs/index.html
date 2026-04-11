@@ -1,0 +1,104 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>苏丹的游戏配置阅读器</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <h1>苏丹的游戏配置阅读器</h1>
+        <p class="hero__lead">
+          导入游戏的 config.zip 或 config 文件夹，浏览器会在本地解析这些配置文件。
+        </p>
+        <div class="hero__actions">
+          <button id="importZipBtn" class="button" type="button">导入 config.zip</button>
+          <button id="importFolderBtn" class="button button--ghost" type="button">导入配置文件夹</button>
+          <button id="clearCacheBtn" class="button button--ghost" type="button">清除本地数据</button>
+        </div>
+        <div id="importStatus" class="muted">尚未导入本地配置数据。</div>
+        <input id="zipInput" type="file" accept=".zip" hidden />
+        <input id="folderInput" type="file" webkitdirectory multiple hidden />
+      </header>
+
+      <main class="layout">
+        <section class="panel panel--stats" id="summary">
+          <div class="panel__title-row">
+            <h2>概览</h2>
+            <div id="generatedAt" class="muted"></div>
+          </div>
+          <div id="summaryGrid" class="stats-grid"></div>
+        </section>
+
+        <section class="panel" id="explorer">
+          <div class="panel__title-row">
+            <h2>配置阅读器</h2>
+            <div class="search-box">
+              <input id="searchInput" class="search" type="search" placeholder="搜索 ID、名称、title、提示词" />
+              <label class="search-toggle">
+                <input id="exactMatchInput" type="checkbox" checked />
+                <span>精准匹配</span>
+              </label>
+            </div>
+          </div>
+          <div class="tabs">
+            <button class="tab is-active" data-target="all">全部</button>
+            <button class="tab" data-target="cards">卡牌</button>
+            <button class="tab" data-target="rites">仪式</button>
+            <button class="tab" data-target="events">事件</button>
+            <button class="tab" data-target="endings">结局</button>
+          </div>
+          <div id="cardSubtabs" class="subtabs" hidden>
+            <button class="subtab is-active" data-card-filter="all">全部卡牌</button>
+            <button class="subtab" data-card-filter="sudan">苏丹卡</button>
+            <button class="subtab" data-card-filter="item">物品</button>
+            <button class="subtab" data-card-filter="char">角色</button>
+          </div>
+          <div id="riteSubtabs" class="subtabs" hidden>
+            <button class="subtab is-active" data-rite-filter="all">全部仪式</button>
+            <button class="subtab" data-rite-filter="TREASURE">奇珍</button>
+          </div>
+          <div id="explorerMeta" class="muted">尚未导入本地配置数据</div>
+          <div class="reader-layout">
+            <div id="explorerList" class="stack"></div>
+            <aside id="detailPane" class="detail-pane">
+              <div class="detail-pane__empty">先导入本地配置数据，然后从左侧选择一条配置查看详情。</div>
+            </aside>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div id="detailModal" class="detail-modal" hidden>
+      <div id="detailModalBackdrop" class="detail-modal__backdrop"></div>
+      <div class="detail-modal__panel">
+        <div class="detail-modal__topbar">
+          <div class="detail-modal__title">详情信息</div>
+          <button id="detailModalClose" class="detail-modal__close" type="button">关闭</button>
+        </div>
+        <div id="detailModalContent" class="detail-modal__content"></div>
+      </div>
+    </div>
+
+    <div id="cardPreview" class="card-preview" hidden>
+      <div id="cardPreviewBackdrop" class="card-preview__backdrop"></div>
+      <div class="card-preview__panel">
+        <div class="card-preview__topbar">
+          <div class="card-preview__title">条目预览</div>
+          <button id="cardPreviewClose" class="card-preview__close" type="button">关闭</button>
+        </div>
+        <div id="cardPreviewContent" class="card-preview__content"></div>
+      </div>
+    </div>
+
+    <button id="scrollTopBtn" class="scroll-top-button" type="button" aria-label="返回顶部" title="返回顶部" hidden>
+      ↑
+    </button>
+
+    <script defer src="./vendor/jszip.min.js"></script>
+    <script defer src="./translation-dicts.js"></script>
+    <script defer src="./app.js"></script>
+  </body>
+</html>
