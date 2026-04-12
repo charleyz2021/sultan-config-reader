@@ -67,6 +67,9 @@ sultan-config-reader/
 
 如果用 GitHub Pages，直接把发布目录指向 `docs/` 即可。
 
+- 在线页面：
+  [https://charleyz2021.github.io/sultan-config-reader/](https://charleyz2021.github.io/sultan-config-reader/)
+
 ## 如何使用
 
 1. 打开网站。

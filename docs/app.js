@@ -19,9 +19,12 @@ const cardPreviewBackdrop = document.querySelector("#cardPreviewBackdrop");
 const cardPreviewClose = document.querySelector("#cardPreviewClose");
 const cardPreviewContent = document.querySelector("#cardPreviewContent");
 const scrollTopBtn = document.querySelector("#scrollTopBtn");
+const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
+const APP_VERSION = "v0.1.1";
+const APP_UPDATED_AT = "2026-04-12";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -1640,7 +1643,9 @@ const renderSlotDetails = (slots) =>
     <div class="readable-item">
       <strong>${escapeHtml(slot.slotId)} · ${renderRichText(slot.text || "未命名槽位")}</strong>
       <div class="detail-sublist">${renderConditionLinesHtml(slot.condition || {}, { bullets: false, rawEntries: slot.conditionEntries || null })}</div>
-      <div class="readable-meta readable-meta--slot-footer">可空：${slot.isEmptyAllowed ? "是" : "否"}，敌对槽位：${slot.isEnemy ? "是" : "否"}</div>
+      <div class="readable-meta readable-meta--slot-footer">
+        可空：${slot.isEmptyAllowed ? "是" : "否"}，敌对槽位：${slot.isEnemy ? "是" : "否"}${slot.openAdsorb ? "，开启吸入：是" : ""}
+      </div>
     </div>
   `);
 
@@ -1880,6 +1885,7 @@ const setupImportUi = () => {
   hero.querySelector(".hero__lead")?.replaceChildren(
     document.createTextNode("导入游戏的 config.zip 或 config 文件夹，浏览器会在本地解析这些配置文件。"),
   );
+  appVersion?.replaceChildren(document.createTextNode(`${APP_VERSION} · 更新于 ${APP_UPDATED_AT}`));
   document.querySelector("#summary h2")?.replaceChildren(document.createTextNode("概览"));
   document.querySelector("#explorer h2")?.replaceChildren(document.createTextNode("配置阅读器"));
   document.querySelector(".detail-modal__title")?.replaceChildren(document.createTextNode("详情信息"));

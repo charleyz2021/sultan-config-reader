@@ -91,6 +91,20 @@ body {
   flex-wrap: wrap;
 }
 
+.hero__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.hero__meta a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .button {
   display: inline-flex;
   align-items: center;
@@ -861,6 +875,10 @@ body {
   .button--ghost,
   .search {
     width: 100%;
+  }
+
+  .hero__meta {
+    justify-content: center;
   }
 
   .search-box {
