@@ -23,7 +23,7 @@ const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.1.1";
+const APP_VERSION = "v0.1.2";
 const APP_UPDATED_AT = "2026-04-12";
 
 let currentTab = "all";
@@ -408,6 +408,7 @@ const createIndices = () => ({
   rites: new Map(siteData.rites.map((item) => [item.id, item])),
   events: new Map(siteData.events.map((item) => [item.id, item])),
   endings: new Map(siteData.endings.map((item) => [item.id, item])),
+  afterStory: new Map((siteData.afterStory || []).map((item) => [item.id, item])),
 });
 
 const tutorialSudanIds = new Set([2000512, 2000513, 2000514, 2000515]);
@@ -430,6 +431,7 @@ const getCommentCounterMap = () => getCommentDictionary().counters || {};
 const getCommentCardMap = () => getCommentDictionary().cards || {};
 const getCommentRiteMap = () => getCommentDictionary().rites || {};
 const getCommentEventMap = () => getCommentDictionary().events || {};
+const getCommentRawKeyMap = () => getCommentDictionary().rawKeys || {};
 const commentSourceKeyForItem = (item) => `${item?.kind || "entry"}:${item?.sourcePath || "unknown"}:${item?.id ?? "unknown"}`;
 
 const ensureCommentDictionaryForItem = (item) => {
@@ -460,11 +462,12 @@ const ensureGlobalCounterCommentDictionary = () => {
   siteData.commentDictionary = mergeCommentDictionary(current, patch);
 };
 
-const typeLabel = (value) => typeLabelMap[value] || value || "未标注";
-const gradeLabel = (item) => materialFromRare(item.rare).label;
-const formatTagTips = (tags = []) => (tags.length ? `检定：${tags.join("、")}` : "");
-const yesNo = (value) => (value ? "是" : "否");
-const formatEquips = (equips = []) => (equips.length ? equips.join("、") : "无");
+  const typeLabel = (value) => typeLabelMap[value] || value || "未标注";
+  const gradeLabel = (item) => materialFromRare(item.rare).label;
+  const formatTagTips = (tags = []) => (tags.length ? `检定：${tags.join("、")}` : "");
+  const yesNo = (value) => (value ? "是" : "否");
+  const formatEquips = (equips = []) => (equips.length ? equips.join("、") : "无");
+  const hasReadableEntries = (entries) => Array.isArray(entries) && entries.length > 0;
 const formatRiteAutoPills = (item) => `
   <span class="pill">等待回合: ${item.waitingRound}</span>
   <span class="pill">自动开始: ${yesNo(item.autoBegin)}</span>
@@ -492,6 +495,7 @@ const allEntries = () => [
   ...(siteData?.rites || []),
   ...(siteData?.events || []),
   ...(siteData?.endings || []),
+  ...(siteData?.afterStory || []),
 ];
 
 const normalizeImportPath = (value) => String(value || "").replaceAll("\\", "/").replace(/^\.?\//, "");
@@ -874,10 +878,20 @@ const buildSiteDataFromFileMap = (fileMap) => {
     rites: riteSummaries,
     events: eventSummaries,
     endings: endingSummaries,
-    afterStory: afterStoryFiles.map(({ data, path: sourcePath }) => ({
+    afterStory: afterStoryFiles.map(({ data, path: sourcePath, raw }) => ({
+      kind: "afterStory",
       id: data.id,
       name: data.name || "",
+      text: "",
       sourcePath,
+      raw: data,
+      rawSource: raw,
+      closeCondition: data.close_condition || {},
+      closeConditionEntries: extractRepeatedObjectEntries(raw, "close_condition"),
+      prior: Array.isArray(data.prior) ? data.prior : [],
+      priorEntries: extractFieldArrayEntries(raw, "prior"),
+      extra: Array.isArray(data.extra) ? data.extra : [],
+      extraEntries: extractFieldArrayEntries(raw, "extra"),
       extraCount: Array.isArray(data.extra) ? data.extra.length : 0,
     })),
     questPreview: Object.values(quest)
@@ -954,13 +968,50 @@ const collectNumericRefs = (value, refs = new Set()) => {
   return refs;
 };
 
-const collectConditionCardRefs = (value) =>
-  [...collectNumericRefs(value)]
+const collectCardRefsFromKeys = (value, refs = new Set()) => {
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectCardRefsFromKeys(item, refs));
+    return refs;
+  }
+  if (!value || typeof value !== "object") return refs;
+  Object.entries(value).forEach(([key, nested]) => {
+    const stateMatch = key.match(/^(?:!?)(?:have|table_have|hand_have)\.([^.]+)(?:\.|$)/);
+    if (stateMatch) {
+      const target = resolveCardTargetByToken(stateMatch[1]);
+      if (target) refs.add(target.id);
+    }
+
+    if (key.match(/^s\d+\+equip$/)) {
+      const target = resolveCardTargetByToken(nested);
+      if (target) refs.add(target.id);
+    }
+
+    const slotFieldMatch = key.match(/^s\d+\.([^.]+)$/);
+    if (slotFieldMatch) {
+      const target = resolveCardTargetByToken(slotFieldMatch[1]);
+      if (target) refs.add(target.id);
+    }
+
+    const tableIdMatch = key.match(/^table\.(\d+)(?:[+\-.]|$)/);
+    if (tableIdMatch) {
+      const target = resolveCardTargetByToken(tableIdMatch[1]);
+      if (target) refs.add(target.id);
+    }
+
+    collectCardRefsFromKeys(nested, refs);
+  });
+  return refs;
+};
+
+const collectConditionCardRefs = (value) => {
+  const refIds = new Set([...collectNumericRefs(value), ...collectCardRefsFromKeys(value)]);
+  return [...refIds]
     .map((id) => {
-      const target = indices.cards.get(id);
-      return target ? { id, label: `${id} · ${target.name}` } : null;
+      const target = indices.cards.get(Number(id));
+      return target ? { id: Number(id), label: `${id} · ${target.name}` } : null;
     })
     .filter(Boolean);
+};
 
 const collectCounterRefs = (value, refs = new Set()) => {
   if (Array.isArray(value)) {
@@ -983,32 +1034,84 @@ const collectCounterRefs = (value, refs = new Set()) => {
 const resolveCounterLabel = (id) =>
   counterSpecialNameMap[String(id)] || counterNameMap[String(id)] || getCommentCounterMap()[String(id)] || "";
 
-const renderCounterReferenceSection = (ids) => {
+const fixedCounterIds = new Set(["7100001", "7100002", "7100003", "7100004", "7100005"]);
+
+const collectCounterRefDetailsFromRaw = (rawSource) => {
+  if (!rawSource) return new Map();
+  const detailMap = new Map();
+  const seen = new Set();
+  const regex = /"((?:!?)(?:global_counter|counter)([+\-=\.])(\d+)([<>]=?|=)?)"\s*:\s*([^,\r\n}]+)/g;
+  for (const match of rawSource.matchAll(regex)) {
+    const [_, rawKey, separator, id, comparisonOperator = "", rawValue = ""] = match;
+    const commentIndex = findLineCommentIndex(rawValue);
+    const valueOnly = commentIndex >= 0 ? rawValue.slice(0, commentIndex) : rawValue;
+    const trimmedValue = valueOnly.trim().replace(/,$/, "");
+    const caseKey = `${rawKey}:${trimmedValue}`;
+    if (seen.has(caseKey)) continue;
+    seen.add(caseKey);
+    if (!detailMap.has(id)) detailMap.set(id, []);
+    detailMap.get(id).push({
+      rawKey,
+      separator,
+      comparisonOperator,
+      value: trimmedValue,
+      comment: getCommentRawKeyMap()[rawKey]?.[0] || "",
+    });
+  }
+  return detailMap;
+};
+
+const formatCounterCaseText = ({ separator, comparisonOperator, value }) => {
+  const readableValue = escapeHtml(valueToReadableText(value));
+  if (separator === "+") return `+${readableValue}`;
+  if (separator === "-") return `-${readableValue}`;
+  if (separator === "=") return `=${readableValue}`;
+  if (comparisonOperator) return `${comparisonOperator}${readableValue}`;
+  return `：${readableValue}`;
+};
+
+const renderCounterReferenceSection = (ids, rawSource = "") => {
   if (!ids?.length) return "";
   ensureGlobalCounterCommentDictionary();
+  const detailMap = collectCounterRefDetailsFromRaw(rawSource);
   return `
-    <details class="detail-pane__section">
-      <summary>这条配置里提到的计数器</summary>
-      <div class="readable-list">
-        <div class="readable-item">
-          <strong>计数器对照</strong>
-          <div class="kv-list">
-            ${ids
-              .map((id) => {
-                const label = resolveCounterLabel(id);
-                return `
-                  <div class="kv-row">
-                    <dt>#${escapeHtml(String(id))}</dt>
-                    <dd>${escapeHtml(label || "未整理")}</dd>
-                  </div>
-                `;
-              })
-              .join("")}
+      <details class="detail-pane__section">
+        <summary>这条配置里提到的计数器</summary>
+        <div>${wrapScrollableSection(`
+          <div class="readable-list">
+            <div class="readable-item">
+              <strong>计数器对照（解析自注释，仅供参考）</strong>
+              <div class="kv-list">
+                ${ids
+                  .map((id) => {
+                    const label = resolveCounterLabel(id);
+                    const cases = fixedCounterIds.has(String(id)) ? [] : (detailMap.get(String(id)) || []);
+                    return `
+                      <div class="kv-row">
+                        <dt>#${escapeHtml(String(id))}</dt>
+                      <dd>
+                        <div>${escapeHtml(label || "未整理")}</div>
+                        ${
+                          cases.length
+                            ? `<div class="detail-sublist">${cases
+                                .map(
+                                  (item) =>
+                                    `<div class="readable-meta">${formatCounterCaseText(item)}${item.comment ? `（${escapeHtml(item.comment)}）` : ""}</div>`,
+                                )
+                                .join("")}</div>`
+                            : ""
+                        }
+                      </dd>
+                    </div>
+                    `;
+                  })
+                  .join("")}
+              </div>
+            </div>
           </div>
-        </div>
-      </div>
-    </details>
-  `;
+        `)}</div>
+      </details>
+    `;
 };
 
 const textOrDash = (value) => {
@@ -1540,14 +1643,19 @@ const conditionRuleHtml = (key, value) => {
   if (exactHandlers[key]) return exactHandlers[key]();
 
   const regexHandlers = [
-    [/^s(\d+)\.is$/, (slotId) => noWrapHtml(`s${slotId}是：${entityLabelHtml(value)}`)],
-    [/^s(\d+)\.type$/, (slotId) => `s${slotId}的类型是${escapeHtml(typeLabel(value))}`],
-    [/^s(\d+)\.rare(>=|<=|>|<|=)$/, (slotId, operator) => `s${slotId}的品级${operator === "=" ? "=" : operator}${escapeHtml(materialFromRare(Number(value)).label)}`],
-    [/^s(\d+)\.图片$/, (slotId) => `s${slotId}替换过立绘`],
-    [/^s(\d+)\.uprare$/, (slotId) => `s${slotId}的品级提升：${escapeHtml(valueToReadableText(value))}`],
-    [/^rare(>=|<=|>|<|=)$/, (operator) => `品级${operator === "=" ? "=" : operator}${escapeHtml(materialFromRare(Number(value)).label)}`],
-    [/^s(\d+)\.(.+)$/, (slotId, token) => noWrapHtml(`s${slotId}的${entityRefHtml(token)}：${escapeHtml(valueToReadableText(value))}`)],
-  ];
+      [/^s(\d+)\.is$/, (slotId) => noWrapHtml(`s${slotId}是：${entityLabelHtml(value)}`)],
+      [/^s(\d+)\.type$/, (slotId) => `s${slotId}的类型是${escapeHtml(typeLabel(value))}`],
+      [/^s(\d+)\.rare(>=|<=|>|<|=)$/, (slotId, operator) => `s${slotId}的品级${operator === "=" ? "=" : operator}${escapeHtml(materialFromRare(Number(value)).label)}`],
+      [/^s(\d+)\.图片$/, (slotId) => `s${slotId}替换过立绘`],
+      [/^s(\d+)\.uprare$/, (slotId) => `s${slotId}的品级提升：${escapeHtml(valueToReadableText(value))}`],
+      [/^table_have\.([^.]+)\.目的地$/, (token) => `目的地是${entityLabelHtml(token)}`],
+      [/^have\.([^.]+)\.苏丹$/, (token) => `${entityLabelHtml(token)}成为苏丹：${escapeHtml(valueToReadableText(value))}`],
+      [/^have\.([^.]+)\.宰相$/, (token) => `${entityLabelHtml(token)}成为宰相：${escapeHtml(valueToReadableText(value))}`],
+      [/^!have\.([^.]+)\.苏丹$/, (token) => `${entityLabelHtml(token)}没有成为苏丹：${escapeHtml(valueToReadableText(value))}`],
+      [/^!have\.([^.]+)\.宰相$/, (token) => `${entityLabelHtml(token)}没有成为宰相：${escapeHtml(valueToReadableText(value))}`],
+      [/^rare(>=|<=|>|<|=)$/, (operator) => `品级${operator === "=" ? "=" : operator}${escapeHtml(materialFromRare(Number(value)).label)}`],
+      [/^s(\d+)\.(.+)$/, (slotId, token) => noWrapHtml(`s${slotId}的${entityRefHtml(token)}：${escapeHtml(valueToReadableText(value))}`)],
+    ];
 
   for (const [pattern, formatter] of regexHandlers) {
     const match = key.match(pattern);
@@ -1754,7 +1862,6 @@ const renderJumpSummary = (rites, events) => `
 `;
 
 const wrapScrollableSection = (html) => `<div class="detail-scrollbox">${html}</div>`;
-const hasReadableEntries = (entries) => Array.isArray(entries) && entries.length > 0;
 const hasJumpTargets = (rites, events, prompts = []) =>
   (Array.isArray(rites) && rites.length > 0) ||
   (Array.isArray(events) && events.length > 0) ||
@@ -1801,6 +1908,10 @@ const renderPreviewHtml = (tab, id) => {
   if (tab === "endings") {
     const item = indices?.endings?.get(Number(id));
     return item ? renderEndingDetailHtml(item, { includeRaw: true }) : "";
+  }
+  if (tab === "afterStory") {
+    const item = indices?.afterStory?.get(Number(id));
+    return item ? renderAfterStoryDetailHtml(item, { includeRaw: true }) : "";
   }
   return "";
 };
@@ -2124,6 +2235,7 @@ const dataForTab = () => {
   }
   if (currentTab === "events") return siteData.events;
   if (currentTab === "endings") return siteData.endings;
+  if (currentTab === "afterStory") return siteData.afterStory || [];
   return [];
 };
 
@@ -2267,7 +2379,7 @@ const renderCardDetailHtml = (item, { includeRaw = true } = {}) => {
         }
       </div>
     </div>
-    ${renderCounterReferenceSection(counterRefs)}
+    ${renderCounterReferenceSection(counterRefs, item.rawSource)}
     ${
       includeRaw
         ? `
@@ -2412,7 +2524,7 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
         `
         : ""
     }
-    ${renderCounterReferenceSection(counterRefs)}
+    ${renderCounterReferenceSection(counterRefs, item.rawSource)}
     ${
       includeRaw
         ? `
@@ -2457,7 +2569,118 @@ const renderEndingDetailHtml = (item, { includeRaw = true } = {}) => {
         `
         : ""
     }
-    ${renderCounterReferenceSection(counterRefs)}
+    ${renderCounterReferenceSection(counterRefs, item.rawSource)}
+    ${
+      includeRaw
+        ? `
+          <details class="detail-pane__section">
+            <summary>原始配置</summary>
+            <div>${wrapScrollableSection(rawConfigBlock(item))}</div>
+          </details>
+        `
+        : ""
+    }
+  `;
+};
+
+const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
+  ensureCommentDictionaryForItem(item);
+  const riteIdBucket = new Set();
+  const eventIdBucket = new Set();
+  collectIdsFromObject(item.raw || {}, "rite", riteIdBucket);
+  collectIdsFromObject(item.raw || {}, "is_rite", riteIdBucket);
+  collectIdsFromObject(item.raw || {}, "_is_rite", riteIdBucket);
+  collectIdsFromObject(item.raw || {}, "event_on", eventIdBucket);
+  collectIdsFromObject(item.raw || {}, "event_off", eventIdBucket);
+  const nextRites = collectJumpItems([...riteIdBucket], "rites", (target) => `${target.id} · ${target.name}`);
+  const nextEvents = collectJumpItems([...eventIdBucket], "events", (target) => `${target.id} · ${target.text}`);
+  const cardRefs = collectConditionCardRefs({
+    close_condition: item.closeCondition || {},
+    prior: item.prior || [],
+    extra: item.extra || [],
+  });
+  const counterRefs = [...collectCounterRefs(item.raw || {})].sort((a, b) => Number(a) - Number(b));
+  const hasCloseCondition = hasConditionContent(item.closeCondition, item.closeConditionEntries);
+  const hasPriorBlock = hasReadableEntries(item.prior);
+  const hasExtraBlock = hasReadableEntries(item.extra);
+  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents);
+  const hasCardRefs = cardRefs.length > 0;
+
+  return `
+    <div class="detail-pane__header">
+      <h3>${escapeHtml(`${item.id} · ${item.name}`)}</h3>
+      <div class="entry-card__meta">${escapeHtml(item.sourcePath)}</div>
+    </div>
+    <p class="detail-pane__summary">${escapeHtml("后日谈配置条目")}</p>
+    <div class="detail-pane__section">
+      <div class="detail-pane__kv">
+          <div class="detail-pane__card">
+            <strong>基础信息</strong>
+            ${renderKvRows([
+              ["ID", item.id],
+              ["名称", item.name || "无"],
+              ...(Array.isArray(item.prior) && item.prior.length ? [["前置文本", `${item.prior.length} 条`]] : []),
+              ["额外文本", Array.isArray(item.extra) ? `${item.extra.length} 条` : "0 条"],
+            ])}
+          </div>
+        </div>
+      </div>
+    ${
+      hasCloseCondition
+        ? `
+          <details class="detail-pane__section">
+            <summary>关闭条件</summary>
+            <div>${wrapScrollableSection(renderConditionLinesHtml(item.closeCondition, { bullets: true, rawEntries: item.closeConditionEntries || null }))}</div>
+          </details>
+        `
+        : ""
+    }
+    ${
+      hasPriorBlock
+        ? `
+          <details class="detail-pane__section">
+            <summary>前置文本</summary>
+            <div>${wrapScrollableSection(renderSettlementReadable(item.prior || [], "前置文本", item.priorEntries || []))}</div>
+          </details>
+        `
+        : ""
+    }
+    ${
+      hasExtraBlock
+        ? `
+          <details class="detail-pane__section">
+            <summary>额外文本</summary>
+            <div>${wrapScrollableSection(renderSettlementReadable(item.extra || [], "额外文本", item.extraEntries || []))}</div>
+          </details>
+        `
+        : ""
+    }
+    ${
+      hasJumpBlock
+        ? `
+          <details class="detail-pane__section">
+            <summary>后续跳转</summary>
+            <div>${wrapScrollableSection(renderJumpSummary(nextRites, nextEvents))}</div>
+          </details>
+        `
+        : ""
+    }
+    ${
+      hasCardRefs
+        ? `
+          <details class="detail-pane__section">
+            <summary>这条配置里提到的卡牌</summary>
+            <div class="readable-list">
+              <div class="readable-item">
+                <strong>卡牌跳转</strong>
+                ${renderJumpList(cardRefs, "cards", { preview: true })}
+              </div>
+            </div>
+          </details>
+        `
+        : ""
+    }
+    ${renderCounterReferenceSection(counterRefs, item.rawSource)}
     ${
       includeRaw
         ? `
@@ -2601,7 +2824,7 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
         `
         : ""
     }
-    ${renderCounterReferenceSection(counterRefs)}
+    ${renderCounterReferenceSection(counterRefs, item.rawSource)}
     ${
       includeRaw
         ? `
@@ -2651,12 +2874,20 @@ const renderDetail = (item) => {
     return;
   }
 
+  if (kind === "afterStory") {
+    detailPane.innerHTML = renderAfterStoryDetailHtml(item);
+    syncDetailToModal();
+    bindJumpEvents();
+    return;
+  }
+
 };
 
 const listCardTitle = (item) => {
   if (item.kind === "cards") return `${item.id} · ${item.name}`;
   if (item.kind === "rites") return `${item.id} · ${item.name}`;
   if (item.kind === "events") return `${item.id} · ${item.text}`;
+  if (item.kind === "afterStory") return `${item.id} · ${item.name}`;
   return `${item.id} · ${item.name}`;
 };
 
@@ -2676,12 +2907,13 @@ const renderExplorer = () => {
     selectedId = items[0]?.id ?? null;
   }
 
-  items.forEach((item) => {
-    const isCard = item.kind === "cards";
-    const isRite = item.kind === "rites";
-    const isEvent = item.kind === "events";
-    const material = isCard && item.type === "sudan" ? materialFromRare(item.rare) : null;
-    const node = card(`
+    items.forEach((item) => {
+      const isCard = item.kind === "cards";
+      const isRite = item.kind === "rites";
+      const isEvent = item.kind === "events";
+      const isAfterStory = item.kind === "afterStory";
+      const material = isCard && item.type === "sudan" ? materialFromRare(item.rare) : null;
+      const node = card(`
       <div class="entry-card__header">
         <h3>${escapeHtml(listCardTitle(item))}</h3>
         ${
@@ -2690,7 +2922,7 @@ const renderExplorer = () => {
             : `<div class="entry-card__meta">${escapeHtml(item.kind === "endings" ? (item.sourcePath || "over.json") : (item.sourcePath || item.subName || ""))}</div>`
         }
       </div>
-      <p>${escapeHtml(item.text || item.title || "无说明文本")}</p>
+        ${item.text || item.title ? `<p>${escapeHtml(item.text || item.title)}</p>` : ""}
       <div class="pill-list">
         ${
           isCard
@@ -2708,16 +2940,21 @@ const renderExplorer = () => {
                 ${item.tagTips?.length ? `<span class="pill">${escapeHtml(formatTagTips(item.tagTips))}</span>` : ""}
                 ${item.type ? `<span class="pill">类型: ${escapeHtml(typeLabel(item.type))}</span>` : ""}
               `
-              : isEvent
-                ? `
-                  <span class="pill">可重复触发: ${item.isReplay ? "是" : "否"}</span>
-                  <span class="pill">本局开始即启动: ${item.autoStart ? "是" : "否"}</span>
-                  <span class="pill">启动后立即校验条件: ${item.startTrigger ? "是" : "否"}</span>
-                `
-                : `
-                  <span class="pill">结局: ${item.id}</span>
-                  <span class="pill">${escapeHtml(item.subName || "无副标题")}</span>
-                `
+                : isEvent
+                  ? `
+                    <span class="pill">可重复触发: ${item.isReplay ? "是" : "否"}</span>
+                    <span class="pill">本局开始即启动: ${item.autoStart ? "是" : "否"}</span>
+                    <span class="pill">启动后立即校验条件: ${item.startTrigger ? "是" : "否"}</span>
+                  `
+                  : isAfterStory
+                    ? `
+                      ${Array.isArray(item.prior) && item.prior.length ? `<span class="pill">前置文本: ${item.prior.length}条</span>` : ""}
+                      <span class="pill">额外文本: ${Array.isArray(item.extra) ? item.extra.length : 0}条</span>
+                    `
+                  : `
+                    <span class="pill">结局: ${item.id}</span>
+                    <span class="pill">${escapeHtml(item.subName || "无副标题")}</span>
+                  `
         }
       </div>
     `);

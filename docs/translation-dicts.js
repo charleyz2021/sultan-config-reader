@@ -6,9 +6,7 @@
     7100004: "侠名",
     7100005: "灵视"
   },
-  counterSpecialNameMap: {
-    7000420: "主角失明"
-  },
+  counterSpecialNameMap: {},
   entityDisplayNameMap: {},
   entityAliasMap: {
     妻子: 2000006
