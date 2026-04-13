@@ -23,13 +23,13 @@ const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.1.2";
-const APP_UPDATED_AT = "2026-04-12";
+const APP_VERSION = "v0.1.3";
+const APP_UPDATED_AT = "2026-04-13";
 
 let currentTab = "all";
 let currentCardFilter = "all";
 let currentRiteFilter = "all";
-let selectedId = null;
+let selectedKey = null;
 let siteData = null;
 let indices = null;
 let importStatus = null;
@@ -49,6 +49,8 @@ const formatDateTime = (isoString) =>
   new Date(isoString).toLocaleString("zh-CN", {
     hour12: false,
   });
+
+const itemSelectionKey = (item) => `${item?.kind || "unknown"}:${item?.id ?? "unknown"}`;
 
 const ensureJsZip = async () => {
   if (window.JSZip) return window.JSZip;
@@ -910,7 +912,7 @@ const jumpTo = (tab, id) => {
   tabs.forEach((node) => node.classList.remove("is-active"));
   tabButton.classList.add("is-active");
   currentTab = tab;
-  selectedId = Number(id);
+  selectedKey = `${tab}:${Number(id)}`;
   searchInput.value = "";
   if (currentTab !== "cards") {
     currentCardFilter = "all";
@@ -2903,8 +2905,8 @@ const renderExplorer = () => {
   explorerMeta.textContent = `当前显示 ${items.length} 条`;
   explorerList.innerHTML = "";
 
-  if (!items.some((item) => item.id === selectedId)) {
-    selectedId = items[0]?.id ?? null;
+  if (!items.some((item) => itemSelectionKey(item) === selectedKey)) {
+    selectedKey = items[0] ? itemSelectionKey(items[0]) : null;
   }
 
     items.forEach((item) => {
@@ -2948,6 +2950,7 @@ const renderExplorer = () => {
                   `
                   : isAfterStory
                     ? `
+                      <span class="pill">后日谈</span>
                       ${Array.isArray(item.prior) && item.prior.length ? `<span class="pill">前置文本: ${item.prior.length}条</span>` : ""}
                       <span class="pill">额外文本: ${Array.isArray(item.extra) ? item.extra.length : 0}条</span>
                     `
@@ -2958,16 +2961,16 @@ const renderExplorer = () => {
         }
       </div>
     `);
-    node.classList.toggle("is-selected", item.id === selectedId);
+    node.classList.toggle("is-selected", itemSelectionKey(item) === selectedKey);
     node.addEventListener("click", () => {
-      selectedId = item.id;
+      selectedKey = itemSelectionKey(item);
       renderExplorer();
       openModalIfNeeded();
     });
     explorerList.appendChild(node);
   });
 
-  renderDetail(items.find((item) => item.id === selectedId) || null);
+  renderDetail(items.find((item) => itemSelectionKey(item) === selectedKey) || null);
 };
 
 tabs.forEach((tab) => {
@@ -2983,7 +2986,7 @@ tabs.forEach((tab) => {
       currentRiteFilter = "all";
       riteSubtabsButtons.forEach((node) => node.classList.toggle("is-active", node.dataset.riteFilter === "all"));
     }
-    selectedId = null;
+    selectedKey = null;
     renderExplorer();
   });
 });
@@ -2993,7 +2996,7 @@ cardSubtabsButtons.forEach((tab) => {
     cardSubtabsButtons.forEach((node) => node.classList.remove("is-active"));
     tab.classList.add("is-active");
     currentCardFilter = tab.dataset.cardFilter;
-    selectedId = null;
+    selectedKey = null;
     renderExplorer();
   });
 });
@@ -3003,7 +3006,7 @@ riteSubtabsButtons.forEach((tab) => {
     riteSubtabsButtons.forEach((node) => node.classList.remove("is-active"));
     tab.classList.add("is-active");
     currentRiteFilter = tab.dataset.riteFilter;
-    selectedId = null;
+    selectedKey = null;
     renderExplorer();
   });
 });
