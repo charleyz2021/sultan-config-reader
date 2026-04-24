@@ -23,8 +23,8 @@ const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.1.3";
-const APP_UPDATED_AT = "2026-04-13";
+const APP_VERSION = "v0.1.4";
+const APP_UPDATED_AT = "2026-04-24";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -121,10 +121,12 @@ const escapeHtml = (value) =>
     .replaceAll(">", "&gt;");
 
 const renderRichText = (value) =>
-  escapeHtml(value || "").replace(
-    /&lt;color=(#[0-9a-fA-F]{6,8}|[a-zA-Z]+)&gt;([\s\S]*?)&lt;\/color&gt;/g,
-    (_match, color, inner) => `<span style="color:${color}">${inner}</span>`,
-  );
+  escapeHtml(value || "")
+    .replace(
+      /&lt;color=(#[0-9a-fA-F]{6,8}|[a-zA-Z]+)&gt;([\s\S]*?)&lt;\/color&gt;/g,
+      (_match, color, inner) => `<span style="color:${color}">${inner}</span>`,
+    )
+    .replace(/&lt;size=\d+&gt;([\s\S]*?)&lt;\/size&gt;/g, "$1");
 
 const jsonBlock = (value) => `<pre>${escapeHtml(typeof value === "string" ? value : JSON.stringify(value, null, 2))}</pre>`;
 const rawConfigBlock = (item) => jsonBlock(item?.rawSource || item?.raw || item);
@@ -323,6 +325,57 @@ const extractObjectEntriesFromSnippet = (rawSnippet) => {
     index = valueEnd;
   }
   return entries;
+};
+
+const scanJsonValueEnd = (input, startIndex) => {
+  let index = startIndex;
+  while (index < input.length && /\s/.test(input[index])) index += 1;
+  if (index >= input.length) return index;
+  const first = input[index];
+  if (first === "{") return findMatchingBrace(input, index) + 1;
+  if (first === "[") return findMatchingBracket(input, index) + 1;
+  if (first === "\"") {
+    let i = index + 1;
+    let escaped = false;
+    while (i < input.length) {
+      const char = input[i];
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === "\"") return i + 1;
+      i += 1;
+    }
+    return i;
+  }
+  let i = index;
+  while (i < input.length && !/[,\]}]/.test(input[i])) i += 1;
+  return i;
+};
+
+const extractRepeatedKeyValues = (raw, keyName) => {
+  const cleaned = stripTrailingCommas(stripJsonComments(raw || ""));
+  const marker = `"${keyName}"`;
+  const values = [];
+  let searchIndex = 0;
+  while (searchIndex < cleaned.length) {
+    const markerIndex = cleaned.indexOf(marker, searchIndex);
+    if (markerIndex < 0) break;
+    let index = markerIndex + marker.length;
+    while (index < cleaned.length && /\s/.test(cleaned[index])) index += 1;
+    if (cleaned[index] !== ":") {
+      searchIndex = markerIndex + marker.length;
+      continue;
+    }
+    index += 1;
+    while (index < cleaned.length && /\s/.test(cleaned[index])) index += 1;
+    const valueStart = index;
+    const valueEnd = scanJsonValueEnd(cleaned, valueStart);
+    const rawValueSnippet = cleaned.slice(valueStart, valueEnd).trim();
+    try {
+      values.push({ key: keyName, value: JSON.parse(rawValueSnippet), rawValueSnippet });
+    } catch {}
+    searchIndex = valueEnd;
+  }
+  return values;
 };
 
 const splitTopLevelObjects = (arrayBody) => {
@@ -767,15 +820,17 @@ const buildSiteDataFromFileMap = (fileMap) => {
     })
     .sort((a, b) => a.id - b.id);
 
-  const riteSummaries = riteFiles.map(({ data, path: sourcePath, raw }) => {
-    const nextEventIds = new Set();
-    const nextRiteIds = new Set();
+    const riteSummaries = riteFiles.map(({ data, path: sourcePath, raw }) => {
+      const nextEventIds = new Set();
+      const nextRiteIds = new Set();
     const prompts = [];
-    const rawSlotEntries = extractRepeatedObjectEntries(raw, "cards_slot");
-    const rawOpenConditionEntries = extractFieldArrayEntries(raw, "open_conditions");
-    collectIdsFromObject(data, "event_on", nextEventIds);
-    collectIdsFromObject(data, "rite", nextRiteIds);
-    collectPromptsFromObject(data, prompts);
+      const rawSlotEntries = extractRepeatedObjectEntries(raw, "cards_slot");
+      const rawOpenConditionEntries = extractFieldArrayEntries(raw, "open_conditions");
+      collectIdsFromObject(data, "event_on", nextEventIds);
+      collectIdsFromObject(data, "rite", nextRiteIds);
+      extractRepeatedKeyValues(raw, "event_on").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => nextEventIds.add(id)));
+      extractRepeatedKeyValues(raw, "rite").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => nextRiteIds.add(id)));
+      collectPromptsFromObject(data, prompts);
     return {
       kind: "rites",
       id: data.id,
@@ -791,6 +846,8 @@ const buildSiteDataFromFileMap = (fileMap) => {
       autoResult: Boolean(data.auto_result),
       onceNew: Boolean(data.once_new),
       tipsText: data.tips_text || [],
+      randomText: data.random_text || {},
+      randomTextUp: data.random_text_up || {},
       tagTips: data.tag_tips || [],
       openConditions: (data.open_conditions || []).map((item, index) => ({
         condition: item.condition || {},
@@ -815,13 +872,15 @@ const buildSiteDataFromFileMap = (fileMap) => {
     };
   });
 
-  const eventSummaries = eventFiles.map(({ data, path: sourcePath, raw }) => {
-    const nextEventIds = new Set();
-    const nextRiteIds = new Set();
-    const prompts = [];
-    collectIdsFromObject(data, "event_on", nextEventIds);
-    collectIdsFromObject(data, "rite", nextRiteIds);
-    collectPromptsFromObject(data, prompts);
+    const eventSummaries = eventFiles.map(({ data, path: sourcePath, raw }) => {
+      const nextEventIds = new Set();
+      const nextRiteIds = new Set();
+      const prompts = [];
+      collectIdsFromObject(data, "event_on", nextEventIds);
+      collectIdsFromObject(data, "rite", nextRiteIds);
+      extractRepeatedKeyValues(raw, "event_on").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => nextEventIds.add(id)));
+      extractRepeatedKeyValues(raw, "rite").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => nextRiteIds.add(id)));
+      collectPromptsFromObject(data, prompts);
     return {
       kind: "events",
       id: data.id,
@@ -950,13 +1009,21 @@ const collectJumpItems = (ids, tab, formatter) =>
     .filter(Boolean);
 
 const collectNumericRefs = (value, refs = new Set()) => {
-  if (Array.isArray(value)) {
-    value.forEach((item) => collectNumericRefs(item, refs));
-    return refs;
-  }
-  if (!value || typeof value !== "object") {
-    return refs;
-  }
+    if (Array.isArray(value)) {
+      value.forEach((item) => collectNumericRefs(item, refs));
+      return refs;
+    }
+    if (typeof value === "number" && Number.isFinite(value)) {
+      refs.add(value);
+      return refs;
+    }
+    if (typeof value === "string" && /^\d+$/.test(value)) {
+      refs.add(Number(value));
+      return refs;
+    }
+    if (!value || typeof value !== "object") {
+      return refs;
+    }
   Object.entries(value).forEach(([key, nested]) => {
     const keyNumber = Number(key);
     if (Number.isFinite(keyNumber) && keyNumber >= 2000000) {
@@ -1163,20 +1230,30 @@ const endingJumpHtml = (id, label) =>
 const resolveRiteName = (id) => indices?.rites?.get(Number(id))?.name || getCommentRiteMap()[String(id)] || `ID ${id}`;
 const resolveEventName = (id) => indices?.events?.get(Number(id))?.text || getCommentEventMap()[String(id)] || `ID ${id}`;
 const resolveEndingName = (id) => indices?.endings?.get(Number(id))?.name || `ID ${id}`;
+const findCardById = (rawId) => {
+  const id = Number(rawId);
+  if (!Number.isFinite(id)) return null;
+  const indexed = indices?.cards?.get(id);
+  if (indexed) return indexed;
+  return siteData?.cards?.find((item) => Number(item.id) === id) || null;
+};
+
 const resolveCardName = (id) => {
-  const target = indices?.cards?.get(Number(id));
+  const target = findCardById(id);
   return target?.name || entityDisplayNameMap[Number(id)] || getCommentCardMap()[String(id)] || `ID ${id}`;
 };
 
 const resolveCardTargetByToken = (rawToken) => {
-  const token = String(rawToken);
+  const token = String(rawToken).trim();
   const aliasId = entityAliasMap[token];
-  if (aliasId && indices?.cards?.has(aliasId)) {
-    return indices.cards.get(aliasId);
+  if (aliasId) {
+    const aliasTarget = findCardById(aliasId);
+    if (aliasTarget) return aliasTarget;
   }
   const numericId = Number(token);
-  if (Number.isFinite(numericId) && indices?.cards?.has(numericId)) {
-    return indices.cards.get(numericId);
+  if (Number.isFinite(numericId)) {
+    const numericTarget = findCardById(numericId);
+    if (numericTarget) return numericTarget;
   }
   return (
     siteData?.cards?.find((item) => item.name === token) ||
@@ -1185,23 +1262,35 @@ const resolveCardTargetByToken = (rawToken) => {
 };
 
 const entityRefHtml = (rawToken) => {
-  const target = resolveCardTargetByToken(rawToken);
+  const token = String(rawToken).trim();
+  const numericId = Number(token);
+  if (Number.isFinite(numericId)) {
+    const numericTarget = findCardById(numericId);
+    if (numericTarget) {
+      return cardJumpHtml(numericTarget.id, numericTarget.name);
+    }
+  }
+  const target = resolveCardTargetByToken(token);
   if (target) {
     return cardJumpHtml(target.id, target.name);
   }
-  return `<strong>${escapeHtml(String(rawToken))}</strong>`;
+  return `<strong>${escapeHtml(token)}</strong>`;
 };
 
 const entityLabelHtml = (rawId) => {
-  const id = Number(rawId);
-  if (Number.isFinite(id) && indices?.cards?.has(id)) {
-    return cardJumpHtml(id, resolveCardName(id));
+  const normalized = String(rawId).trim();
+  const id = Number(normalized);
+  if (Number.isFinite(id)) {
+    const numericTarget = findCardById(id);
+    if (numericTarget) {
+      return cardJumpHtml(numericTarget.id, numericTarget.name);
+    }
   }
-  const target = resolveCardTargetByToken(rawId);
+  const target = resolveCardTargetByToken(normalized);
   if (target) {
     return cardJumpHtml(target.id, target.name);
   }
-  return escapeHtml(String(rawId));
+  return escapeHtml(normalized);
 };
 
 const noWrapHtml = (content) => `<span class="inline-nowrap">${content}</span>`;
@@ -1294,6 +1383,7 @@ const renderChoiceBubbleBlocks = (resultEntries = [], actionEntries = []) => {
   allEntries.forEach(({ key, value }) => {
     if (key === "choose" && value && typeof value === "object") {
       Object.entries(value).forEach(([choiceKey, choiceText]) => {
+        if (typeof choiceText !== "string") return;
         const speakerKey = speakerTokenFromKey(choiceKey);
         ensureGroup(speakerKey).chooseTexts.push(String(choiceText));
       });
@@ -1333,36 +1423,157 @@ const renderChoiceBubbleBlocks = (resultEntries = [], actionEntries = []) => {
   return blocks.join("");
 };
 
+const renderChoiceActionBlocks = (resultEntries = [], actionEntries = []) => {
+  const allEntries = [...(resultEntries || []), ...(actionEntries || [])];
+  const blocks = [];
+
+  allEntries.forEach(({ key, value }) => {
+    if (key !== "choose" || !value || typeof value !== "object") return;
+    const optionEntries = Object.entries(value)
+      .filter(([, optionValue]) => typeof optionValue !== "string")
+      .map(([optionKey, optionValue]) => ({ key: optionKey, value: optionValue }));
+
+    if (!optionEntries.length) return;
+
+    blocks.push(`<div class="readable-meta"><strong>随机选择一项</strong></div>`);
+    const optionLines = summarizeMutationEntries(optionEntries, "结果");
+    if (optionLines.length) {
+      blocks.push(
+        optionLines
+          .map((line) => `<div class="readable-meta detail-sublist">${line.replace(/^结果：/, "")}</div>`)
+          .join(""),
+      );
+    } else {
+      blocks.push(`<div class="readable-meta detail-sublist">无额外效果</div>`);
+    }
+  });
+
+  return blocks.join("");
+};
+
+const renderOptionCaseBlocks = (actionEntries = []) => {
+  const optionEntry = actionEntries.find(({ key, value }) => key === "option" && value && typeof value === "object");
+  const caseEntries = actionEntries.filter(({ key, value }) => /^case:op\d+$/.test(key) && value && typeof value === "object");
+  if (!optionEntry && !caseEntries.length) return "";
+
+  const optionItems = Array.isArray(optionEntry?.value?.items) ? optionEntry.value.items : [];
+  const optionTextByTag = new Map(
+    optionItems
+      .filter((item) => item && typeof item === "object" && item.tag)
+      .map((item) => [String(item.tag), String(item.text || "")]),
+  );
+
+  const blocks = [];
+  if (optionEntry?.value) {
+    const optionValue = optionEntry.value;
+    blocks.push(`<div class="readable-meta"><strong>分支选项</strong></div>`);
+    if (optionValue.text) {
+      blocks.push(`<div class="readable-meta detail-sublist">文本：${renderRichText(optionValue.text)}</div>`);
+    }
+    optionItems.forEach((item) => {
+      const tag = item?.tag ? String(item.tag) : "未命名";
+      const text = item?.text ? String(item.text) : "";
+      blocks.push(`<div class="readable-meta detail-sublist">选项 ${escapeHtml(tag)}：${renderRichText(text || "无文本")}</div>`);
+    });
+  }
+
+  caseEntries.forEach(({ key, value }) => {
+    const tag = key.split(":")[1];
+    const optionText = optionTextByTag.get(tag);
+    const caseValue = value && typeof value === "object" ? value : {};
+    const promptText = caseValue.prompt && typeof caseValue.prompt === "object" ? promptValueText(caseValue.prompt) : "";
+    const caseActions = { ...caseValue };
+    delete caseActions.prompt;
+    const caseLines = summarizeMutationEntries(caseActions, "结果");
+
+    blocks.push(`<div class="readable-meta"><strong>分支 ${escapeHtml(tag)}${optionText ? `：${renderRichText(optionText)}` : ""}</strong></div>`);
+    if (promptText) {
+      blocks.push(`<div class="readable-meta detail-sublist">文本：${renderRichText(promptText)}</div>`);
+    }
+    if (caseLines.length) {
+      blocks.push(
+        caseLines
+          .map((line) => `<div class="readable-meta detail-sublist">${line.replace(/^结果：/, "")}</div>`)
+          .join(""),
+      );
+    } else {
+      blocks.push(`<div class="readable-meta detail-sublist">无额外效果</div>`);
+    }
+  });
+
+  return blocks.join("");
+};
+
+const renderConfirmActionBlock = (value, allEntries, prefix) => {
+  const confirmValue = value && typeof value === "object" ? value : {};
+  const successEntry = allEntries.find((entry) => entry.key === "success");
+  const failedEntry = allEntries.find((entry) => entry.key === "failed");
+  const rawSuccessEntries = successEntry?.rawValueSnippet ? extractObjectEntriesFromSnippet(successEntry.rawValueSnippet) : [];
+  const rawFailedEntries = failedEntry?.rawValueSnippet ? extractObjectEntriesFromSnippet(failedEntry.rawValueSnippet) : [];
+  const parsedSuccess = successEntry?.value && typeof successEntry.value === "object" ? successEntry.value : {};
+  const parsedFailed = failedEntry?.value && typeof failedEntry.value === "object" ? failedEntry.value : {};
+  const successLines = summarizeMutationEntries(mergeMutationEntries(rawSuccessEntries, parsedSuccess), "结果");
+  const failedLines = summarizeMutationEntries(mergeMutationEntries(rawFailedEntries, parsedFailed), "结果");
+  const blocks = [];
+
+  if (confirmValue.text) {
+    blocks.push(`<div class="readable-meta"><strong>${prefix}</strong></div>`);
+    blocks.push(`<div class="readable-meta detail-sublist">文本：${renderRichText(confirmValue.text)}</div>`);
+  }
+
+  if (confirmValue.confirm_text || confirmValue.cancel_text) {
+    const rows = [];
+    if (confirmValue.confirm_text) rows.push(`确认文本：${renderRichText(confirmValue.confirm_text)}`);
+    if (confirmValue.cancel_text) rows.push(`取消文本：${renderRichText(confirmValue.cancel_text)}`);
+    blocks.push(`<div class="readable-meta detail-sublist">${rows.join("<br>")}</div>`);
+  }
+
+  if (successLines.length) {
+    blocks.push(`<div class="readable-meta detail-sublist"><strong>确认后</strong></div>`);
+    blocks.push(successLines.map((line) => `<div class="readable-meta detail-sublist">${line.replace(/^结果：/, "")}</div>`).join(""));
+  }
+
+  if (failedLines.length) {
+    blocks.push(`<div class="readable-meta detail-sublist"><strong>取消后</strong></div>`);
+    blocks.push(failedLines.map((line) => `<div class="readable-meta detail-sublist">${line.replace(/^结果：/, "")}</div>`).join(""));
+  }
+
+  return blocks.join("");
+};
+
 const summarizeMutationEntries = (action = {}, prefix = "动作") => {
   const entries = [];
   const actionEntries = normalizeMutationEntries(action);
-  const riteIds = actionEntries.filter((entry) => entry.key === "rite").flatMap((entry) => collectIdsFromValue(entry.value));
-  const eventIds = actionEntries.filter((entry) => entry.key === "event_on").flatMap((entry) => collectIdsFromValue(entry.value));
-  const endingIds = actionEntries.filter((entry) => entry.key === "over").flatMap((entry) => collectIdsFromValue(entry.value));
-
-  if (riteIds.length) {
-    const labels = riteIds.map((id) => riteJumpHtml(id, resolveRiteName(id)));
-    entries.push(`${prefix}：出现仪式：${labels.join(" / ")}`);
-  }
-
-  if (eventIds.length) {
-    const labels = eventIds.map((id) => eventJumpHtml(id, resolveEventName(id)));
-    entries.push(`${prefix}：出现事件：${labels.join(" / ")}`);
-  }
-
-  if (endingIds.length) {
-    const labels = endingIds.map((id) => endingJumpHtml(id, resolveEndingName(id)));
-    entries.push(`${prefix}：进入结局：${labels.join(" / ")}`);
-  }
 
   const mutationRuleHandlers = [
     {
-      match: ({ key }) => key === "rite" || key === "event_on" || key === "over",
-      apply: () => null,
+      match: ({ key }) => key === "rite",
+      apply: ({ value }) => {
+        const ids = collectIdsFromValue(value);
+        return `${prefix}：出现仪式：${ids.map((id) => riteJumpHtml(id, resolveRiteName(id))).join(" / ")}`;
+      },
     },
     {
-      match: ({ key }) => key === "card",
+      match: ({ key }) => key === "event_on",
       apply: ({ value }) => {
+        const ids = collectIdsFromValue(value);
+        return `${prefix}：出现事件：${ids.map((id) => eventJumpHtml(id, resolveEventName(id))).join(" / ")}`;
+      },
+    },
+      {
+        match: ({ key }) => key === "over",
+        apply: ({ value }) => {
+          const ids = collectIdsFromValue(value);
+          return `${prefix}：进入结局：${ids.map((id) => endingJumpHtml(id, resolveEndingName(id))).join(" / ")}`;
+        },
+      },
+      {
+        match: ({ key }) => key === "confirm",
+        apply: (entry) => renderConfirmActionBlock(entry.value, actionEntries, prefix),
+      },
+      {
+        match: ({ key }) => key === "card",
+        apply: ({ value }) => {
         if (Array.isArray(value) && value.length) {
           const [first, ...rest] = value;
           const label =
@@ -1406,23 +1617,31 @@ const summarizeMutationEntries = (action = {}, prefix = "动作") => {
       apply: () => null,
     },
     {
+      match: ({ key, value }) => key === "option" && value && typeof value === "object",
+      apply: () => null,
+    },
+    {
+      match: ({ key, value }) => /^case:op\d+$/.test(key) && value && typeof value === "object",
+      apply: () => null,
+    },
+    {
       match: ({ key }) => key === "event_off",
       apply: ({ value }) => `${prefix}：关闭事件：${value} · ${resolveEventName(value)}`,
     },
-    {
-      match: ({ key }) => Boolean(staticActionText(key)),
-      apply: ({ key, value }) => {
-        const readableValue = key === "prompt" ? promptValueText(value) : valueToReadableText(value);
-        return `${prefix}：${staticActionText(key)}${mutationValueSuffix(value, { text: readableValue })}`;
+      {
+        match: ({ key }) => key === "success" || key === "failed",
+        apply: () => null,
       },
+      {
+        match: ({ key }) => Boolean(staticActionText(key)),
+        apply: ({ key, value }) => {
+          const readableValue = key === "prompt" ? promptValueText(value) : valueToReadableText(value);
+          return `${prefix}：${staticActionText(key)}${mutationValueSuffix(value, { text: readableValue })}`;
+        },
     },
     {
       match: ({ key }) => key === "coin" || key === "金币",
       apply: ({ value }) => `${prefix}：获得金币：${valueToReadableText(value)}`,
-    },
-    {
-      match: ({ key }) => /^case:op\d+$/.test(key),
-      apply: ({ key }) => `${prefix}：设置分支选项 ${key.split(":")[1]}`,
     },
     {
       match: ({ key }) => key.startsWith("focus."),
@@ -1461,16 +1680,26 @@ const summarizeMutationEntries = (action = {}, prefix = "动作") => {
       },
     },
     {
-      match: ({ key }) => /^table\.(\d+|[^.]+)-(.+)$/.test(key),
+      match: ({ key }) => /^table\.(\d+|[^.]+)([-=])(.+)$/.test(key),
       apply: ({ key, value }) => {
-        const [, target, token] = key.match(/^table\.(\d+|[^.]+)-(.+)$/);
-        return `${prefix}：table.${entityRefHtml(target)}的${escapeHtml(token)}-${escapeHtml(valueToReadableText(value))}`;
+        const [, target, separator, token] = key.match(/^table\.(\d+|[^.]+)([-=])(.+)$/);
+        const normalizedTarget = String(target).trim();
+        const numericTarget = Number(normalizedTarget);
+        const targetHtml = Number.isFinite(numericTarget)
+          ? cardJumpHtml(numericTarget, resolveCardName(numericTarget))
+          : entityRefHtml(normalizedTarget);
+        return `${prefix}：更新桌面标记：${targetHtml}${escapeHtml(separator)}${escapeHtml(token)}：${escapeHtml(valueToReadableText(value))}`;
       },
     },
     {
       match: ({ key }) => key.startsWith("table."),
       apply: ({ key, value }) => {
         const target = key.slice("table.".length).replaceAll(".uprare", ".品级提升");
+        const cardMarkMatch = target.match(/^(\d+)([-=])(.+)$/);
+        if (cardMarkMatch) {
+          const [, cardId, separator, mark] = cardMarkMatch;
+          return `${prefix}：更新桌面标记：${cardJumpHtml(Number(cardId), resolveCardName(Number(cardId)))}${escapeHtml(separator)}${escapeHtml(mark)}${mutationValueSuffix(value, { keepImplicit: true })}`;
+        }
         return `${prefix}：更新桌面标记：${target}${mutationValueSuffix(value, { keepImplicit: true })}`;
       },
     },
@@ -1546,6 +1775,8 @@ const renderActionResultNotes = (entry, rawMeta = {}) => {
     );
   }
   const mergedActionEntries = mergeMutationEntries(rawMeta.actionEntries || [], entry.action || {});
+  const optionCaseBlocks = renderOptionCaseBlocks(mergedActionEntries);
+  const choiceActionBlocks = renderChoiceActionBlocks(mergedResultEntries, mergedActionEntries);
   const actionLines = summarizeMutationEntries(mergedActionEntries, "动作");
   if (actionLines.length) {
     blocks.push(
@@ -1553,6 +1784,12 @@ const renderActionResultNotes = (entry, rawMeta = {}) => {
         .map((line) => `<div class="readable-meta detail-sublist">${line.replace(/^动作：/, "")}</div>`)
         .join("")}`,
     );
+  }
+  if (optionCaseBlocks) {
+    blocks.push(optionCaseBlocks);
+  }
+  if (choiceActionBlocks) {
+    blocks.push(choiceActionBlocks);
   }
   const choiceBubbleBlocks = renderChoiceBubbleBlocks(mergedResultEntries, mergedActionEntries);
   if (choiceBubbleBlocks) {
@@ -1629,6 +1866,75 @@ const triggerTimingText = (key, value) => {
   return `${key}：${valueToReadableText(value)}`;
 };
 
+const formatFormulaCounterHtml = (scope, id) => {
+  const label = resolveCounterLabel(id);
+  const prefix = scope === "global_counter" ? "全局" : "";
+  return label
+    ? `${prefix}计数器 #${escapeHtml(String(id))}（${escapeHtml(label)}）`
+    : `${prefix}计数器 #${escapeHtml(String(id))}`;
+};
+
+const formatFormulaTermHtml = (term) => {
+  const normalized = String(term).trim();
+  if (!normalized) return "";
+  if (/^\d+$/.test(normalized)) return escapeHtml(normalized);
+  const scopedCounterMatch = normalized.match(/^(global_counter|counter)\.(\d+)$/);
+  if (scopedCounterMatch) {
+    const [, scope, id] = scopedCounterMatch;
+    return formatFormulaCounterHtml(scope, id);
+  }
+  if (normalized === "rare") return "此卡槽的卡牌的品级";
+  const slotRareMatch = normalized.match(/^s(\d+)\.rare$/);
+  if (slotRareMatch) return `s${slotRareMatch[1]}的品级`;
+  const slotTypeMatch = normalized.match(/^s(\d+)\.type$/);
+  if (slotTypeMatch) return `s${slotTypeMatch[1]}的类型`;
+  const slotValueMatch = normalized.match(/^s(\d+)\.(.+)$/);
+  if (slotValueMatch) return noWrapHtml(`s${slotValueMatch[1]}的${entityRefHtml(slotValueMatch[2])}`);
+  const specialExprMatch = normalized.match(/^e\((.+)\)$/);
+  if (specialExprMatch) return noWrapHtml(`敌对槽位的卡牌的（${escapeHtml(specialExprMatch[1])}）`);
+  return entityRefHtml(normalized);
+};
+
+const formatFormulaExpressionHtml = (expression) => {
+  const parts = [];
+  const source = String(expression || "").trim();
+  let buffer = "";
+  let depth = 0;
+  for (let index = 0; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "(") {
+      depth += 1;
+      buffer += char;
+      continue;
+    }
+    if (char === ")") {
+      depth = Math.max(0, depth - 1);
+      buffer += char;
+      continue;
+    }
+    if ((char === "+" || char === "-") && depth === 0) {
+      if (buffer.trim()) parts.push(buffer.trim());
+      buffer = char;
+      continue;
+    }
+    buffer += char;
+  }
+  if (buffer.trim()) parts.push(buffer.trim());
+
+  return parts
+    .map((part, index) => {
+      const sign = part.startsWith("+") || part.startsWith("-") ? part[0] : "";
+      const rawTerm = (sign ? part.slice(1) : part).trim();
+      if (!rawTerm) return "";
+      const termHtml = formatFormulaTermHtml(rawTerm);
+      if (!termHtml) return "";
+      const prefix = index === 0 ? (sign === "-" ? "-" : "") : sign;
+      return `${prefix}${termHtml}`;
+    })
+    .filter(Boolean)
+    .join("");
+};
+
 const conditionRuleHtml = (key, value) => {
   const cardLabel = (id, prefix = "", suffix = "") => `${prefix}${entityLabelHtml(id)}${suffix}`;
   const exactHandlers = {
@@ -1656,12 +1962,23 @@ const conditionRuleHtml = (key, value) => {
       [/^!have\.([^.]+)\.苏丹$/, (token) => `${entityLabelHtml(token)}没有成为苏丹：${escapeHtml(valueToReadableText(value))}`],
       [/^!have\.([^.]+)\.宰相$/, (token) => `${entityLabelHtml(token)}没有成为宰相：${escapeHtml(valueToReadableText(value))}`],
       [/^rare(>=|<=|>|<|=)$/, (operator) => `品级${operator === "=" ? "=" : operator}${escapeHtml(materialFromRare(Number(value)).label)}`],
-      [/^s(\d+)\.(.+)$/, (slotId, token) => noWrapHtml(`s${slotId}的${entityRefHtml(token)}：${escapeHtml(valueToReadableText(value))}`)],
+      [/^s(\d+)\.(.+)$/, (slotId, token) => noWrapHtml(`s${slotId}是${entityRefHtml(token)}：${escapeHtml(valueToReadableText(value))}`)],
+      [/^!s(\d+)\.(.+)$/, (slotId, token) => noWrapHtml(`s${slotId}不是${entityRefHtml(token)}：${escapeHtml(valueToReadableText(value))}`)],
     ];
 
   for (const [pattern, formatter] of regexHandlers) {
     const match = key.match(pattern);
     if (match) return formatter(...match.slice(1));
+  }
+
+  const formulaMatch = key.match(/^f:(.+?)(>=|<=|>|<|=)$/);
+  if (formulaMatch) {
+    const [, expression, operator] = formulaMatch;
+    return `${formatFormulaExpressionHtml(expression)}${operator}${escapeHtml(String(value))}`;
+  }
+  const formulaOnlyMatch = key.match(/^f:(.+)$/);
+  if (formulaOnlyMatch) {
+    return formatFormulaExpressionHtml(formulaOnlyMatch[1]);
   }
 
   const tableHaveCountMatch = key.match(/^table_have\.(.+?)\.count(>=|<=|>|<|=)$/);
@@ -1678,6 +1995,11 @@ const conditionRuleHtml = (key, value) => {
   if (rangeMatch) {
     const [, left, operator] = rangeMatch;
     const normalizedValue = Array.isArray(value) ? value[0] : value;
+    const formulaLeftMatch = left.match(/^(r\d+):(.+)$/);
+    if (formulaLeftMatch) {
+      const [, prefix, expression] = formulaLeftMatch;
+      return `${escapeHtml(prefix)}: ${formatFormulaExpressionHtml(expression)}${operator} ${escapeHtml(valueToReadableText(normalizedValue))}`;
+    }
     return `${escapeHtml(left)}${operator} ${escapeHtml(valueToReadableText(normalizedValue))}`;
   }
   const costMatch = key.match(/^cost\.(.+?)(>=|<=|>|<|=)$/);
@@ -1758,6 +2080,36 @@ const renderSlotDetails = (slots) =>
       </div>
     </div>
   `);
+
+const renderRandomTextDetails = (entries) =>
+  Object.entries(entries || {})
+    .map(
+      ([key, text]) => `
+        <div class="readable-item">
+          <strong>${escapeHtml(key)}</strong>
+          <div class="readable-meta">${renderRichText(String(text || ""))}</div>
+        </div>
+      `,
+    )
+    .join("");
+
+const renderRandomTextUpDetails = (entries) =>
+  Object.entries(entries || {})
+    .map(([key, item]) => {
+      const rows = [];
+      if (item?.text) rows.push(["文本", item.text]);
+      if (item?.type) rows.push(["类型", item.type]);
+      if (item?.type_tips) rows.push(["类型说明", item.type_tips]);
+      if (item?.low_target !== undefined && item?.low_target !== null) rows.push(["最低目标", item.low_target]);
+      if (item?.low_target_tips) rows.push(["最低目标说明", item.low_target_tips]);
+      return `
+        <div class="readable-item">
+          <strong>${escapeHtml(key)}</strong>
+          ${renderKvRows(rows)}
+        </div>
+      `;
+    })
+    .join("");
 
 const normalizeTriggerEntries = (onObject) => {
   const entries = Array.isArray(onObject)
@@ -1864,10 +2216,9 @@ const renderJumpSummary = (rites, events) => `
 `;
 
 const wrapScrollableSection = (html) => `<div class="detail-scrollbox">${html}</div>`;
-const hasJumpTargets = (rites, events, prompts = []) =>
+const hasJumpTargets = (rites, events) =>
   (Array.isArray(rites) && rites.length > 0) ||
-  (Array.isArray(events) && events.length > 0) ||
-  (Array.isArray(prompts) && prompts.length > 0);
+  (Array.isArray(events) && events.length > 0);
 const hasEndingTextExtra = (entries) =>
   Array.isArray(entries) &&
   entries.some((entry) => entry && typeof entry === "object" && (entry.result_text || hasConditionContent(entry.condition, entry.conditionEntries)));
@@ -1896,7 +2247,7 @@ const openModalIfNeeded = () => {
 
 const renderPreviewHtml = (tab, id) => {
   if (tab === "cards") {
-    const item = indices?.cards?.get(Number(id));
+    const item = findCardById(id);
     return item ? renderCardDetailHtml(item, { includeRaw: true }) : "";
   }
   if (tab === "rites") {
@@ -2414,8 +2765,10 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
   const hasSettlementBlock = hasReadableEntries(item.raw?.settlement || []);
   const hasSettlementExtreBlock = hasReadableEntries(item.raw?.settlement_extre || []);
   const hasWaitingEndBlock = hasReadableEntries(item.raw?.waiting_round_end_action || []);
-  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents, item.prompts);
+  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents);
   const hasCardRefs = cardRefs.length > 0;
+  const hasRandomTextBlock = Object.keys(item.randomText || {}).length > 0;
+  const hasRandomTextUpBlock = Object.keys(item.randomTextUp || {}).length > 0;
 
   return `
     <div class="detail-pane__header">
@@ -2438,6 +2791,26 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
               ${item.tipsText.map((text) => `<div class="readable-meta">${renderRichText(text)}</div>`).join("")}
             </div>
           </div>
+        `
+        : ""
+    }
+    ${
+      hasRandomTextBlock
+        ? `
+          <details class="detail-pane__section">
+            <summary>随机文本</summary>
+            <div>${wrapScrollableSection(`<div class="readable-list">${renderRandomTextDetails(item.randomText)}</div>`)}</div>
+          </details>
+        `
+        : ""
+    }
+    ${
+      hasRandomTextUpBlock
+        ? `
+          <details class="detail-pane__section">
+            <summary>随机文本加成</summary>
+            <div>${wrapScrollableSection(`<div class="readable-list">${renderRandomTextUpDetails(item.randomTextUp)}</div>`)}</div>
+          </details>
         `
         : ""
     }
@@ -2594,6 +2967,11 @@ const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
   collectIdsFromObject(item.raw || {}, "_is_rite", riteIdBucket);
   collectIdsFromObject(item.raw || {}, "event_on", eventIdBucket);
   collectIdsFromObject(item.raw || {}, "event_off", eventIdBucket);
+  extractRepeatedKeyValues(item.rawSource || "", "rite").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => riteIdBucket.add(id)));
+  extractRepeatedKeyValues(item.rawSource || "", "is_rite").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => riteIdBucket.add(id)));
+  extractRepeatedKeyValues(item.rawSource || "", "_is_rite").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => riteIdBucket.add(id)));
+  extractRepeatedKeyValues(item.rawSource || "", "event_on").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => eventIdBucket.add(id)));
+  extractRepeatedKeyValues(item.rawSource || "", "event_off").forEach(({ value }) => collectIdsFromValue(value).forEach((id) => eventIdBucket.add(id)));
   const nextRites = collectJumpItems([...riteIdBucket], "rites", (target) => `${target.id} · ${target.name}`);
   const nextEvents = collectJumpItems([...eventIdBucket], "events", (target) => `${target.id} · ${target.text}`);
   const cardRefs = collectConditionCardRefs({
@@ -2711,7 +3089,7 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
   const hasSettlementBlock = hasReadableEntries(item.raw?.settlement || []);
   const hasSettlementExtreBlock = hasReadableEntries(item.raw?.settlement_extre || []);
   const hasSettlementPriorBlock = hasReadableEntries(item.raw?.settlement_prior || []);
-  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents, item.prompts);
+  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents);
   const hasCardRefs = cardRefs.length > 0;
 
   return `
@@ -2796,17 +3174,7 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
         ? `
           <details class="detail-pane__section">
             <summary>后续跳转</summary>
-            <div>${wrapScrollableSection(`
-              ${renderJumpSummary(nextRites, nextEvents)}
-              ${
-                item.prompts?.length
-                  ? `<div style="height:10px"></div><div class="readable-item"><strong>提示文本</strong>${renderReadableEntries(
-                      item.prompts,
-                      (prompt) => `<div class="readable-item"><div class="readable-meta">${escapeHtml(prompt)}</div></div>`,
-                    )}</div>`
-                  : ""
-              }
-            `)}</div>
+            <div>${wrapScrollableSection(renderJumpSummary(nextRites, nextEvents))}</div>
           </details>
         `
         : ""

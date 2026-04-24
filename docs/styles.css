@@ -748,6 +748,9 @@ body {
   border-radius: 14px;
   border: 1px solid var(--line);
   background: rgba(214, 182, 110, 0.06);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .readable-item--plain {
@@ -770,6 +773,9 @@ body {
 .detail-sublist {
   margin-left: 14px;
   margin-top: 6px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .condition-line {
@@ -791,6 +797,9 @@ body {
 .readable-meta {
   color: var(--muted);
   line-height: 1.7;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .readable-meta--slot-footer {
@@ -800,6 +809,7 @@ body {
 .kv-list {
   display: grid;
   gap: 8px;
+  min-width: 0;
 }
 
 .kv-row {
@@ -816,7 +826,22 @@ body {
 .kv-row dd {
   margin: 0;
   color: var(--ink);
+  white-space: normal;
+  overflow-wrap: anywhere;
   word-break: break-word;
+}
+
+.detail-pane__summary,
+.condition-line,
+.entry-card p {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.detail-scrollbox {
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .stack::-webkit-scrollbar,
