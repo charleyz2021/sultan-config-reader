@@ -129,7 +129,7 @@ const renderRichText = (value) =>
     .replace(/&lt;size=\d+&gt;([\s\S]*?)&lt;\/size&gt;/g, "$1");
 
 const jsonBlock = (value) => `<pre>${escapeHtml(typeof value === "string" ? value : JSON.stringify(value, null, 2))}</pre>`;
-const rawConfigBlock = (item) => jsonBlock(item?.rawSource || item?.raw || item);
+const rawConfigBlock = (item) => `<div class="raw-config-block">${jsonBlock(item?.rawSource || item?.raw || item)}</div>`;
 
 const stripJsonComments = (input) => {
   let out = "";
@@ -2905,7 +2905,7 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
         ? `
           <details class="detail-pane__section">
             <summary>原始配置</summary>
-            <div>${wrapScrollableSection(rawConfigBlock(item))}</div>
+            <div>${rawConfigBlock(item)}</div>
           </details>
         `
         : ""
@@ -2950,7 +2950,7 @@ const renderEndingDetailHtml = (item, { includeRaw = true } = {}) => {
         ? `
           <details class="detail-pane__section">
             <summary>原始配置</summary>
-            <div>${wrapScrollableSection(rawConfigBlock(item))}</div>
+            <div>${rawConfigBlock(item)}</div>
           </details>
         `
         : ""
@@ -3066,7 +3066,7 @@ const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
         ? `
           <details class="detail-pane__section">
             <summary>原始配置</summary>
-            <div>${wrapScrollableSection(rawConfigBlock(item))}</div>
+            <div>${rawConfigBlock(item)}</div>
           </details>
         `
         : ""
@@ -3200,7 +3200,7 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
         ? `
           <details class="detail-pane__section">
             <summary>原始配置</summary>
-            <div>${wrapScrollableSection(rawConfigBlock(item))}</div>
+            <div>${rawConfigBlock(item)}</div>
           </details>
         `
         : ""

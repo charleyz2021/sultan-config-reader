@@ -653,6 +653,36 @@ body {
   color: #ebddb7;
 }
 
+.raw-config-block {
+  max-height: 340px;
+  overflow-x: auto;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-color: rgba(214, 182, 110, 0.28) rgba(12, 8, 6, 0.45);
+}
+
+.raw-config-block pre {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  min-width: max-content;
+}
+
+.raw-config-block::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.raw-config-block::-webkit-scrollbar-thumb {
+  background: rgba(214, 182, 110, 0.28);
+  border-radius: 999px;
+}
+
+.raw-config-block::-webkit-scrollbar-track {
+  background: rgba(12, 8, 6, 0.45);
+  border-radius: 999px;
+}
+
 .detail-pane details {
   margin-top: 16px;
   border: 1px solid var(--line);
