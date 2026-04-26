@@ -12,10 +12,12 @@ const cardSubtabsButtons = [...document.querySelectorAll("[data-card-filter]")];
 const riteSubtabsButtons = [...document.querySelectorAll("[data-rite-filter]")];
 const detailModal = document.querySelector("#detailModal");
 const detailModalBackdrop = document.querySelector("#detailModalBackdrop");
+const detailModalBack = document.querySelector("#detailModalBack");
 const detailModalClose = document.querySelector("#detailModalClose");
 const detailModalContent = document.querySelector("#detailModalContent");
 const cardPreview = document.querySelector("#cardPreview");
 const cardPreviewBackdrop = document.querySelector("#cardPreviewBackdrop");
+const cardPreviewBack = document.querySelector("#cardPreviewBack");
 const cardPreviewClose = document.querySelector("#cardPreviewClose");
 const cardPreviewContent = document.querySelector("#cardPreviewContent");
 const scrollTopBtn = document.querySelector("#scrollTopBtn");
@@ -23,8 +25,8 @@ const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.1.5";
-const APP_UPDATED_AT = "2026-04-25";
+const APP_VERSION = "v0.1.6";
+const APP_UPDATED_AT = "2026-04-27";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -38,6 +40,8 @@ let folderInput = null;
 let importZipBtn = null;
 let importFolderBtn = null;
 let clearCacheBtn = null;
+let mobileDetailModalHistory = [];
+let cardPreviewHistory = [];
 
 const mobileMq = window.matchMedia("(max-width: 900px)");
 const CACHE_DB_NAME = "sultan-config-reader";
@@ -1623,7 +1627,10 @@ const summarizeMutationEntries = (action = {}, prefix = "动作") => {
     },
     {
       match: ({ key }) => key === "event_off",
-      apply: ({ value }) => `${prefix}：关闭事件：${value} · ${resolveEventName(value)}`,
+      apply: ({ value }) => {
+        const ids = collectIdsFromValue(value);
+        return `${prefix}：关闭事件：${ids.map((id) => eventJumpHtml(id, resolveEventName(id))).join(" / ")}`;
+      },
     },
       {
         match: ({ key }) => key === "success" || key === "failed",
@@ -1663,6 +1670,12 @@ const summarizeMutationEntries = (action = {}, prefix = "动作") => {
       match: ({ key }) => key.startsWith("clean."),
       apply: ({ key, value }) => {
         const target = key.slice("clean.".length);
+        if (target === "rite") {
+          const ids = collectIdsFromValue(value);
+          return ids.length
+            ? `${prefix}：清理仪式：${ids.map((id) => riteJumpHtml(id, resolveRiteName(id))).join(" / ")}`
+            : `${prefix}：清理仪式：${escapeHtml(valueToReadableText(value))}`;
+        }
         return target === "rite"
           ? `${prefix}：清理仪式：${riteJumpHtml(value, resolveRiteName(value))}`
           : `${prefix}：清理槽位或标记：${target}${mutationValueSuffix(value)}`;
@@ -1753,8 +1766,187 @@ const collectIdsFromValue = (value) => {
   const ids = new Set();
   if (typeof value === "number") ids.add(value);
   if (typeof value === "string" && /^\d+$/.test(value)) ids.add(Number(value));
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\[?\s*\d+(?:\s*,\s*\d+)+\s*\]?$/.test(trimmed)) {
+      trimmed
+        .replace(/^\[/, "")
+        .replace(/\]$/, "")
+        .split(",")
+        .map((item) => Number(item.trim()))
+        .filter(Number.isFinite)
+        .forEach((id) => ids.add(id));
+    }
+  }
   collectNumericRefs(value, ids);
   return [...ids].filter(Number.isFinite).sort((a, b) => a - b);
+};
+
+const collectEndingIdBucket = (rawObject = {}, rawSource = "") => {
+  const endingIdBucket = new Set();
+  collectIdsFromObject(rawObject, "over", endingIdBucket);
+  extractRepeatedKeyValues(rawSource || "", "over").forEach(({ value }) => {
+    collectIdsFromValue(value).forEach((id) => endingIdBucket.add(id));
+  });
+  return [...endingIdBucket].filter(Number.isFinite);
+};
+
+const buildEndingTargets = (rawObject = {}, rawSource = "", seedEndingIds = []) =>
+  collectJumpItems(
+    [...new Set([...(seedEndingIds || []), ...collectEndingIdBucket(rawObject, rawSource)])],
+    "endings",
+    (target) => `${target.id} · ${target.name}`,
+  );
+
+const entryReferencesEnding = (entry, endingId, rawMeta = {}) => {
+  const endingRefs = new Set(collectEndingIdBucket({
+    ...((entry && typeof entry === "object") ? entry : {}),
+    result: entry?.result || {},
+    action: entry?.action || {},
+  }, rawMeta?.rawSnippet || ""));
+  return endingRefs.has(Number(endingId));
+};
+
+const renderEndingSourceEntry = (entry, titleHtml, rawMeta = {}) => `
+  <div class="readable-item">
+    <strong>${titleHtml}</strong>
+    ${rawMeta.sourceHintHtml ? `<div class="readable-meta">${rawMeta.sourceHintHtml}</div>` : ""}
+    ${
+      hasConditionContent(entry.condition, rawMeta.conditionEntries)
+        ? `
+          <div class="readable-meta">触发条件</div>
+          <div class="detail-sublist">${renderConditionLinesHtml(entry.condition || {}, { bullets: true, rawEntries: rawMeta.conditionEntries || null })}</div>
+        `
+        : `<div class="readable-meta">无额外条件</div>`
+    }
+  </div>
+`;
+
+const emphasizeEndingSourceJumpHtml = (sourceJumpHtml) =>
+  sourceJumpHtml
+    ? `<span class="ending-source-link">${sourceJumpHtml}</span>`
+    : "";
+
+const buildEndingSourceTitleHtml = (sourceTitle, sourceJumpHtml, entryTitle, index) => (
+  (() => {
+    const emphasizedSourceJumpHtml = emphasizeEndingSourceJumpHtml(sourceJumpHtml);
+    return entryTitle
+      ? (emphasizedSourceJumpHtml
+        ? `达成 ${emphasizedSourceJumpHtml} 的${escapeHtml(sourceTitle)}（${renderRichText(entryTitle)}）`
+        : `${escapeHtml(sourceTitle)}（${renderRichText(entryTitle)}）`)
+      : (emphasizedSourceJumpHtml
+        ? `达成 ${emphasizedSourceJumpHtml} 的${escapeHtml(sourceTitle)}（${index + 1}）`
+        : `${escapeHtml(sourceTitle)}（${index + 1}）`);
+  })()
+);
+
+const buildOptionTextMap = (optionValue = {}) => {
+  const items = Array.isArray(optionValue?.items) ? optionValue.items : [];
+  return new Map(
+    items
+      .filter((item) => item && typeof item === "object" && item.tag)
+      .map((item) => [String(item.tag), String(item.text || "")]),
+  );
+};
+
+const pushEndingSourceBlocks = (sourceBlocks, endingId, entries, rawEntries, sourceTitle, sourceJumpHtml) => {
+  const normalizedEntries = normalizeReadableEntries(entries || [], rawEntries || []);
+  normalizedEntries.forEach((entry, index) => {
+    const rawMeta = rawEntries?.[index] || {};
+    const actionEntries = rawMeta.actionEntries?.length
+      ? rawMeta.actionEntries
+      : extractRepeatedObjectEntries(rawMeta.rawSnippet || "", "action");
+    const optionEntry = actionEntries.find(({ key, value }) => key === "option" && value && typeof value === "object");
+    const optionTextByTag = buildOptionTextMap(optionEntry?.value || {});
+    const caseEntries = actionEntries.filter(
+      ({ key, value }) => /^case:op\d+$/.test(key) && value && typeof value === "object",
+    );
+
+    const matchedCaseEntries = caseEntries.filter(({ value, rawValueSnippet }) =>
+      entryReferencesEnding(value, endingId, { rawSnippet: rawValueSnippet }),
+    );
+
+    if (matchedCaseEntries.length) {
+      matchedCaseEntries.forEach(({ key: caseKey, value: caseValue, rawValueSnippet }, caseIndex) => {
+        const tag = caseKey.split(":")[1];
+        const optionText = optionTextByTag.get(tag);
+        const titleHtml = buildEndingSourceTitleHtml(sourceTitle, sourceJumpHtml, "", caseIndex);
+        sourceBlocks.push(
+          renderEndingSourceEntry(
+            { condition: caseValue.condition || {} },
+            titleHtml,
+            {
+              conditionEntries: extractRepeatedObjectEntries(rawValueSnippet || "", "condition"),
+              sourceHintHtml: optionText ? `分支选项：${renderRichText(optionText)}` : `分支选项：${escapeHtml(tag)}`,
+            },
+          ),
+        );
+      });
+      return;
+    }
+
+    if (!entryReferencesEnding(entry, endingId, rawMeta)) return;
+    const entryTitle = entry.resultTitle || rawEntries?.[index]?.entry?.resultTitle || rawEntries?.[index]?.entry?.result_title || "";
+    const titleHtml = buildEndingSourceTitleHtml(sourceTitle, sourceJumpHtml, entryTitle, index);
+    sourceBlocks.push(
+      renderEndingSourceEntry(
+        entry,
+        titleHtml,
+        rawMeta,
+      ),
+    );
+  });
+};
+
+const buildEndingSourceData = (item) => {
+  const endingId = Number(item.id);
+  if (!siteData) return { sourceBlocks: [] };
+
+  const sourceBlocks = [];
+
+  const vanishCards = (siteData.cards || []).filter(
+    (card) => card.vanishOver !== null && card.vanishOver !== undefined && Number(card.vanishOver) === endingId,
+  );
+  if (vanishCards.length) {
+    sourceBlocks.push(`
+      <div class="readable-item">
+        <strong>卡牌超时</strong>
+        <div class="detail-sublist">${renderJumpList(vanishCards.map((card) => ({ id: card.id, label: `${card.id} · ${card.name}` })), "cards", { preview: true })}</div>
+      </div>
+    `);
+  }
+
+  (siteData.rites || []).forEach((rite) => {
+    const jump = riteJumpHtml(rite.id, `${rite.id} · ${rite.name}`);
+      const settlementPriorEntries = rite.settlementPriorEntries?.length ? rite.settlementPriorEntries : extractFieldArrayEntries(rite.rawSource || "", "settlement_prior");
+      const settlementEntries = rite.settlementEntries?.length ? rite.settlementEntries : extractFieldArrayEntries(rite.rawSource || "", "settlement");
+      const settlementExtreEntries = rite.settlementExtreEntries?.length ? rite.settlementExtreEntries : extractFieldArrayEntries(rite.rawSource || "", "settlement_extre");
+      const waitingRoundEndEntries = rite.waitingRoundEndEntries?.length ? rite.waitingRoundEndEntries : extractFieldArrayEntries(rite.rawSource || "", "waiting_round_end_action");
+      pushEndingSourceBlocks(sourceBlocks, endingId, rite.raw?.settlement_prior || [], settlementPriorEntries, "前置结算", jump);
+      pushEndingSourceBlocks(sourceBlocks, endingId, rite.raw?.settlement || [], settlementEntries, "结算规则", jump);
+      pushEndingSourceBlocks(sourceBlocks, endingId, rite.raw?.settlement_extre || [], settlementExtreEntries, "额外结算", jump);
+      pushEndingSourceBlocks(sourceBlocks, endingId, rite.raw?.waiting_round_end_action || [], waitingRoundEndEntries, "仪式未处理，自动关闭", jump);
+  });
+
+  (siteData.events || []).forEach((event) => {
+      const jump = eventJumpHtml(event.id, `${event.id} · ${event.text}`);
+      const settlementPriorEntries = event.settlementPriorEntries?.length ? event.settlementPriorEntries : extractFieldArrayEntries(event.rawSource || "", "settlement_prior");
+      const settlementEntries = event.settlementEntries?.length ? event.settlementEntries : extractFieldArrayEntries(event.rawSource || "", "settlement");
+      const settlementExtreEntries = event.settlementExtreEntries?.length ? event.settlementExtreEntries : extractFieldArrayEntries(event.rawSource || "", "settlement_extre");
+      pushEndingSourceBlocks(sourceBlocks, endingId, event.raw?.settlement_prior || [], settlementPriorEntries, "前置结算", jump);
+      pushEndingSourceBlocks(sourceBlocks, endingId, event.raw?.settlement || [], settlementEntries, "结算规则", jump);
+      pushEndingSourceBlocks(sourceBlocks, endingId, event.raw?.settlement_extre || [], settlementExtreEntries, "额外结算", jump);
+  });
+
+  (siteData.afterStory || []).forEach((afterStory) => {
+      const jump = `<button class="jump jump--inline" data-tab="afterStory" data-id="${afterStory.id}" data-preview="afterStory">${escapeHtml(`${afterStory.id} · ${afterStory.name}`)}</button>`;
+      const priorEntries = afterStory.priorEntries?.length ? afterStory.priorEntries : extractFieldArrayEntries(afterStory.rawSource || "", "prior");
+      const extraEntries = afterStory.extraEntries?.length ? afterStory.extraEntries : extractFieldArrayEntries(afterStory.rawSource || "", "extra");
+      pushEndingSourceBlocks(sourceBlocks, endingId, afterStory.prior || [], priorEntries, "后日谈前置文本", jump);
+      pushEndingSourceBlocks(sourceBlocks, endingId, afterStory.extra || [], extraEntries, "后日谈额外文本", jump);
+    });
+
+  return { sourceBlocks };
 };
 
 const collectJumpIdBuckets = (rawObject = {}, rawSource = "", seedRiteIds = [], seedEventIds = []) => {
@@ -2250,16 +2442,28 @@ const conditionLines = (node, depth = 0, rawEntries = null) => {
 
 const renderConditionDetails = (condition) => renderConditionLinesHtml(condition, { bullets: true });
 
+const renderJumpSection = (title, items, tab) =>
+  Array.isArray(items) && items.length
+    ? `
+      <div class="readable-item">
+        <strong>${title}</strong>
+        ${renderJumpList(items, tab, { preview: true })}
+      </div>
+    `
+    : "";
+
 const renderJumpSummary = (rites, events) => `
   <div class="readable-list">
-    <div class="readable-item">
-      <strong>仪式跳转</strong>
-      ${renderJumpList(rites, "rites", { preview: true })}
-    </div>
-    <div class="readable-item">
-      <strong>事件跳转</strong>
-      ${renderJumpList(events, "events", { preview: true })}
-    </div>
+    ${renderJumpSection("仪式跳转", rites, "rites")}
+    ${renderJumpSection("事件跳转", events, "events")}
+  </div>
+`;
+
+const renderJumpSummaryWithEndings = (rites, events, endings) => `
+  <div class="readable-list">
+    ${renderJumpSection("仪式跳转", rites, "rites")}
+    ${renderJumpSection("事件跳转", events, "events")}
+    ${renderJumpSection("结局跳转", endings, "endings")}
   </div>
 `;
 
@@ -2289,8 +2493,46 @@ const renderEndingTextExtra = (entries) =>
 
 const openModalIfNeeded = () => {
   if (!mobileMq.matches || !detailModal) return;
+  if (detailModal.hidden) {
+    mobileDetailModalHistory = [];
+  }
   detailModal.hidden = false;
   document.body.style.overflow = "hidden";
+  updateDetailModalBackButton();
+};
+
+const pushMobileDetailModalState = () => {
+  if (!mobileMq.matches || !detailModal || !detailModalContent || detailModal.hidden) return;
+  pushHistoryHtml(mobileDetailModalHistory, detailModalContent.innerHTML, updateDetailModalBackButton);
+};
+
+const updateDetailModalBackButton = () => {
+  if (!detailModalBack) return;
+  detailModalBack.hidden = !mobileMq.matches || mobileDetailModalHistory.length === 0;
+};
+
+const updateCardPreviewBackButton = () => {
+  if (!cardPreviewBack) return;
+  cardPreviewBack.hidden = cardPreviewHistory.length === 0;
+};
+
+const pushHistoryHtml = (history, html, onUpdate) => {
+  if (!html.trim()) return;
+  history.push(html);
+  onUpdate?.();
+};
+
+const resetHistory = (history, onUpdate) => {
+  history.length = 0;
+  onUpdate?.();
+};
+
+const restoreHistoryHtml = (contentEl, history, onUpdate) => {
+  if (!contentEl || history.length === 0) return false;
+  contentEl.innerHTML = history.pop();
+  bindJumpEventsIn(contentEl);
+  onUpdate?.();
+  return true;
 };
 
 const renderPreviewHtml = (tab, id) => {
@@ -2323,6 +2565,7 @@ const openEntityPreview = (tab, id) => {
 
   if (mobileMq.matches) {
     if (!detailModal || !detailModalContent) return;
+    pushMobileDetailModalState();
     detailModalContent.innerHTML = previewHtml;
     detailModal.hidden = false;
     document.body.style.overflow = "hidden";
@@ -2331,20 +2574,37 @@ const openEntityPreview = (tab, id) => {
   }
 
   if (!cardPreview || !cardPreviewContent) return;
+  if (!cardPreview.hidden) {
+    pushHistoryHtml(cardPreviewHistory, cardPreviewContent.innerHTML, updateCardPreviewBackButton);
+  } else {
+    resetHistory(cardPreviewHistory, updateCardPreviewBackButton);
+  }
   cardPreviewContent.innerHTML = previewHtml;
   cardPreview.hidden = false;
+  updateCardPreviewBackButton();
   bindJumpEventsIn(cardPreviewContent);
 };
 
 const closeCardPreview = () => {
   if (!cardPreview) return;
   cardPreview.hidden = true;
+  resetHistory(cardPreviewHistory, updateCardPreviewBackButton);
+};
+
+const goBackCardPreview = () => {
+  restoreHistoryHtml(cardPreviewContent, cardPreviewHistory, updateCardPreviewBackButton);
 };
 
 const closeDetailModal = () => {
   if (!detailModal) return;
   detailModal.hidden = true;
+  resetHistory(mobileDetailModalHistory, updateDetailModalBackButton);
   document.body.style.overflow = "";
+};
+
+const goBackDetailModal = () => {
+  if (!mobileMq.matches) return;
+  restoreHistoryHtml(detailModalContent, mobileDetailModalHistory, updateDetailModalBackButton);
 };
 
 const updateScrollTopButton = () => {
@@ -2359,6 +2619,7 @@ const scrollToTop = () => {
 const syncDetailToModal = () => {
   if (mobileMq.matches && detailModalContent) {
     detailModalContent.innerHTML = detailPane.innerHTML;
+    updateDetailModalBackButton();
   }
 };
 
@@ -2373,6 +2634,9 @@ const bindJumpEventsIn = (root) => {
       ) {
         openEntityPreview(button.dataset.tab, button.dataset.id);
         return;
+      }
+      if (mobileMq.matches && detailModalContent && detailModal && !detailModal.hidden && detailModalContent.contains(button)) {
+        pushMobileDetailModalState();
       }
       jumpTo(button.dataset.tab, Number(button.dataset.id));
       openModalIfNeeded();
@@ -2401,8 +2665,10 @@ const setupImportUi = () => {
   document.querySelector("#summary h2")?.replaceChildren(document.createTextNode("概览"));
   document.querySelector("#explorer h2")?.replaceChildren(document.createTextNode("配置阅读器"));
   document.querySelector(".detail-modal__title")?.replaceChildren(document.createTextNode("详情信息"));
+  detailModalBack && (detailModalBack.textContent = "返回");
   detailModalClose && (detailModalClose.textContent = "关闭");
-  document.querySelector(".card-preview__title")?.replaceChildren(document.createTextNode("条目预览"));
+  document.querySelector(".card-preview__title")?.replaceChildren(document.createTextNode("详情信息"));
+  cardPreviewBack && (cardPreviewBack.textContent = "返回");
   cardPreviewClose && (cardPreviewClose.textContent = "关闭");
   searchInput?.setAttribute("placeholder", "搜索 ID、名称、title、提示词");
   tabs.forEach((tab) => {
@@ -2827,6 +3093,7 @@ const renderCardDetailHtml = (item, { includeRaw = true } = {}) => {
 const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
   ensureCommentDictionaryForItem(item);
   const { nextRites, nextEvents } = buildJumpTargets(item.raw || {}, item.rawSource || "", item.nextRiteIds || [], item.nextEventIds || []);
+  const nextEndings = buildEndingTargets(item.raw || {}, item.rawSource || []);
   const cardRefs = collectConditionCardRefs({
     cards_slot: item.raw?.cards_slot || {},
     open_conditions: item.raw?.open_conditions || [],
@@ -2842,7 +3109,7 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
   const hasSettlementBlock = hasReadableEntries(item.raw?.settlement || []);
   const hasSettlementExtreBlock = hasReadableEntries(item.raw?.settlement_extre || []);
   const hasWaitingEndBlock = hasReadableEntries(item.raw?.waiting_round_end_action || []);
-  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents);
+  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents) || nextEndings.length > 0;
   const hasCardRefs = cardRefs.length > 0;
   const hasRandomTextBlock = Object.keys(item.randomText || {}).length > 0;
   const hasRandomTextUpBlock = Object.keys(item.randomTextUp || {}).length > 0;
@@ -2956,7 +3223,7 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
         ? `
           <details class="detail-pane__section">
             <summary>后续跳转</summary>
-            <div>${wrapScrollableSection(renderJumpSummary(nextRites, nextEvents))}</div>
+            <div>${wrapScrollableSection(renderJumpSummaryWithEndings(nextRites, nextEvents, nextEndings))}</div>
           </details>
         `
         : ""
@@ -2993,9 +3260,9 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
 };
 
 const renderEndingDetailHtml = (item, { includeRaw = true } = {}) => {
-  ensureCommentDictionaryForItem(item);
-  const counterRefs = [...collectCounterRefs(item.raw || {})].sort((a, b) => Number(a) - Number(b));
-  return `
+    ensureCommentDictionaryForItem(item);
+    const endingSourceData = buildEndingSourceData(item);
+    return `
     <div class="detail-pane__header">
       <h3>${renderRichTitle(item.id, item.name)}</h3>
       <div class="entry-card__meta">${escapeHtml(item.sourcePath || "over.json")}</div>
@@ -3013,20 +3280,29 @@ const renderEndingDetailHtml = (item, { includeRaw = true } = {}) => {
         </div>
       </div>
     </div>
-    ${
-      hasEndingTextExtra(item.textExtra)
+      ${
+        endingSourceData.sourceBlocks.length
+          ? `
+            <details class="detail-pane__section">
+              <summary>达成条件</summary>
+              <div>${wrapScrollableSection(`<div class="readable-list">${endingSourceData.sourceBlocks.join("")}</div>`)}</div>
+            </details>
+          `
+          : ""
+      }
+      ${
+        hasEndingTextExtra(item.textExtra)
         ? `
           <details class="detail-pane__section">
             <summary>差分文本</summary>
             <div>${wrapScrollableSection(renderEndingTextExtra((item.textExtra || []).map((entry, index) => ({ ...entry, conditionEntries: item.textExtraEntries?.[index]?.conditionEntries || [] }))))}</div>
           </details>
         `
-        : ""
-    }
-    ${renderCounterReferenceSection(counterRefs, item.rawSource)}
-    ${
-      includeRaw
-        ? `
+          : ""
+      }
+      ${
+        includeRaw
+          ? `
           <details class="detail-pane__section">
             <summary>原始配置</summary>
             <div>${rawConfigBlock(item)}</div>
@@ -3046,6 +3322,7 @@ const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
   eventIds.forEach((id) => eventIdBucket.add(id));
   const nextRites = collectJumpItems([...riteIdBucket], "rites", (target) => `${target.id} · ${target.name}`);
   const nextEvents = collectJumpItems([...eventIdBucket], "events", (target) => `${target.id} · ${target.text}`);
+  const nextEndings = buildEndingTargets(item.raw || {}, item.rawSource || []);
   const cardRefs = collectConditionCardRefs({
     close_condition: item.closeCondition || {},
     prior: item.prior || [],
@@ -3055,7 +3332,7 @@ const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
   const hasCloseCondition = hasConditionContent(item.closeCondition, item.closeConditionEntries);
   const hasPriorBlock = hasReadableEntries(item.prior);
   const hasExtraBlock = hasReadableEntries(item.extra);
-  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents);
+  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents) || nextEndings.length > 0;
   const hasCardRefs = cardRefs.length > 0;
 
   return `
@@ -3112,7 +3389,7 @@ const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
         ? `
           <details class="detail-pane__section">
             <summary>后续跳转</summary>
-            <div>${wrapScrollableSection(renderJumpSummary(nextRites, nextEvents))}</div>
+            <div>${wrapScrollableSection(renderJumpSummaryWithEndings(nextRites, nextEvents, nextEndings))}</div>
           </details>
         `
         : ""
@@ -3151,6 +3428,7 @@ const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
 const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
   ensureCommentDictionaryForItem(item);
   const { nextRites, nextEvents } = buildJumpTargets(item.raw || {}, item.rawSource || "", item.nextRiteIds || [], item.nextEventIds || []);
+  const nextEndings = buildEndingTargets(item.raw || {}, item.rawSource || []);
   const cardRefs = collectConditionCardRefs({
     condition: item.raw?.condition || {},
     settlement: item.raw?.settlement || [],
@@ -3162,7 +3440,7 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
   const hasSettlementBlock = hasReadableEntries(item.raw?.settlement || []);
   const hasSettlementExtreBlock = hasReadableEntries(item.raw?.settlement_extre || []);
   const hasSettlementPriorBlock = hasReadableEntries(item.raw?.settlement_prior || []);
-  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents);
+  const hasJumpBlock = hasJumpTargets(nextRites, nextEvents) || nextEndings.length > 0;
   const hasCardRefs = cardRefs.length > 0;
 
   return `
@@ -3247,7 +3525,7 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
         ? `
           <details class="detail-pane__section">
             <summary>后续跳转</summary>
-            <div>${wrapScrollableSection(renderJumpSummary(nextRites, nextEvents))}</div>
+            <div>${wrapScrollableSection(renderJumpSummaryWithEndings(nextRites, nextEvents, nextEndings))}</div>
           </details>
         `
         : ""
@@ -3465,8 +3743,10 @@ riteSubtabsButtons.forEach((tab) => {
 });
 
 detailModalBackdrop?.addEventListener("click", closeDetailModal);
+detailModalBack?.addEventListener("click", goBackDetailModal);
 detailModalClose?.addEventListener("click", closeDetailModal);
 cardPreviewBackdrop?.addEventListener("click", closeCardPreview);
+cardPreviewBack?.addEventListener("click", goBackCardPreview);
 cardPreviewClose?.addEventListener("click", closeCardPreview);
 scrollTopBtn?.addEventListener("click", scrollToTop);
 window.addEventListener("scroll", updateScrollTopButton, { passive: true });
