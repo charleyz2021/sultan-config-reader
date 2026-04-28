@@ -27,6 +27,7 @@
           <button id="clearCacheBtn" class="button button--ghost" type="button">清除本地数据</button>
         </div>
         <div id="importStatus" class="muted">尚未导入本地配置数据。</div>
+        <div class="hero__hint muted">数据显示不全时请清除本地数据重新导入。</div>
         <input id="zipInput" type="file" accept=".zip" hidden />
         <input id="folderInput" type="file" webkitdirectory multiple hidden />
       </header>
@@ -58,6 +59,7 @@
             <button class="tab" data-target="events">事件</button>
             <button class="tab" data-target="endings">结局</button>
             <button class="tab" data-target="afterStory">后日谈</button>
+            <button class="tab" data-target="quests">一千零一夜</button>
           </div>
           <div id="cardSubtabs" class="subtabs" hidden>
             <button class="subtab is-active" data-card-filter="all">全部卡牌</button>

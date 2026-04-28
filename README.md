@@ -2,6 +2,10 @@
 
 这是一个纯前端的配置阅读器，用来查看《苏丹的游戏》`config` 目录里的 JSON/JSONC 配置。
 
+在线页面：
+
+- [https://charleyz2021.github.io/sultan-config-reader/](https://charleyz2021.github.io/sultan-config-reader/)
+
 它的设计目标是：
 
 - 不内置游戏配置数据
@@ -17,6 +21,7 @@
   - 事件
   - 结局
   - 后日谈
+  - 一千零一夜
 - 支持查看结构化信息
 - 支持查看带注释的原始配置
 - 支持在条目之间点击预览跳转
@@ -68,8 +73,6 @@ sultan-config-reader/
 
 如果用 GitHub Pages，直接把发布目录指向 `docs/` 即可。
 
-- 在线页面：
-  [https://charleyz2021.github.io/sultan-config-reader/](https://charleyz2021.github.io/sultan-config-reader/)
 
 ## 如何使用
 
@@ -87,3 +90,4 @@ sultan-config-reader/
 - 当前不优先支持：
   - `rar`
 - 页面依赖浏览器本地缓存；清除浏览器站点数据后需要重新导入
+

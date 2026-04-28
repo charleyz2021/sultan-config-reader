@@ -91,6 +91,11 @@ body {
   flex-wrap: wrap;
 }
 
+#importStatus {
+  margin-top: 18px;
+  line-height: 1.55;
+}
+
 .hero__meta {
   display: flex;
   flex-wrap: wrap;
@@ -103,6 +108,11 @@ body {
   color: inherit;
   text-decoration: underline;
   text-underline-offset: 2px;
+}
+
+.hero__hint {
+  margin-top: 4px;
+  font-size: 0.92rem;
 }
 
 .button {
@@ -270,7 +280,7 @@ body {
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--accent-2);
+  color: #edd27b;
   font-weight: 700;
   text-decoration: none;
   box-shadow: none;
@@ -312,7 +322,7 @@ body {
 .jump--inline:hover {
   background: transparent;
   border: 0;
-  color: #f2dda2;
+  color: #fff0bf;
   text-decoration: underline;
 }
 
@@ -955,10 +965,16 @@ body {
     font-size: 2.2rem;
   }
 
-  .button,
-  .button--ghost,
   .search {
     width: 100%;
+  }
+
+  .hero__actions {
+    gap: 10px;
+  }
+
+  .hero__actions .button {
+    flex: 0 0 auto;
   }
 
   .hero__meta {
@@ -967,11 +983,11 @@ body {
 
   .search-box {
     width: 100%;
-    justify-content: stretch;
+    justify-content: flex-start;
   }
 
   .search-toggle {
-    width: 100%;
+    width: auto;
     justify-content: center;
   }
 
@@ -987,21 +1003,13 @@ body {
   .tabs,
   .subtabs {
     gap: 8px;
+    justify-content: flex-start;
   }
 
   .tab,
   .subtab {
-    flex: 1 1 calc(50% - 8px);
+    flex: 0 0 auto;
     text-align: center;
-  }
-
-  .detail-pane__kv {
-    grid-template-columns: 1fr;
-  }
-
-  .kv-row {
-    grid-template-columns: 1fr;
-    gap: 4px;
   }
 
   .scroll-top-button {
