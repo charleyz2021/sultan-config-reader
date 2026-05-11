@@ -25,8 +25,8 @@ const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.1.7";
-const APP_UPDATED_AT = "2026-04-28";
+const APP_VERSION = "v0.1.8";
+const APP_UPDATED_AT = "2026-05-11";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -532,6 +532,34 @@ const ensureGlobalCounterCommentDictionary = () => {
   const gradeLabel = (item) => materialFromRare(item.rare).label;
   const formatTagTips = (tags = []) => (tags.length ? `检定：${tags.join("、")}` : "");
   const yesNo = (value) => (value ? "是" : "否");
+  const eventAutoStartStageLabels = {
+    0: "新手阶段",
+    1: "正式阶段",
+  };
+  const hasOwnField = (source, field) => Object.prototype.hasOwnProperty.call(source || {}, field);
+  const asArray = (value) => (value === undefined || value === null ? [] : Array.isArray(value) ? value : [value]);
+  const eventAutoStartInitValue = (item) => item.autoStartInit ?? item.raw?.auto_start_init;
+  const eventAutoStartStageText = (stage) => eventAutoStartStageLabels[stage] || `阶段 ${stage}`;
+  const eventAutoStartStages = (item) => asArray(eventAutoStartInitValue(item))
+    .map((stage) => Number(stage))
+    .filter((stage) => Number.isFinite(stage))
+    .map(eventAutoStartStageText);
+  const eventAutoStartPillHtml = (label, value) => `<span class="pill">${escapeHtml(label)}: ${escapeHtml(value)}</span>`;
+  const hasEventAutoStart = (item) => item.hasAutoStart || hasOwnField(item.raw, "auto_start");
+  const eventAutoStartValue = (item) => {
+    if (item.hasAutoStart) return item.autoStart;
+    return item.raw?.auto_start;
+  };
+  const formatEventAutoStartPills = (item) => {
+    const pills = [];
+    if (hasEventAutoStart(item)) {
+      pills.push(eventAutoStartPillHtml("开局默认激活", yesNo(eventAutoStartValue(item))));
+    }
+    eventAutoStartStages(item).forEach((stage) => {
+      pills.push(eventAutoStartPillHtml(`${stage}默认激活`, "是"));
+    });
+    return pills.join("");
+  };
   const formatEquips = (equips = []) => (equips.length ? equips.join("、") : "无");
   const hasReadableEntries = (entries) => Array.isArray(entries) && entries.length > 0;
 const formatRiteAutoPills = (item) => `
@@ -895,7 +923,9 @@ const buildSiteDataFromFileMap = (fileMap) => {
       condition: data.condition || {},
       conditionEntries: extractRepeatedObjectEntries(raw, "condition"),
       isReplay: Boolean(data.is_replay),
+      hasAutoStart: Object.prototype.hasOwnProperty.call(data, "auto_start"),
       autoStart: Boolean(data.auto_start),
+      autoStartInit: Array.isArray(data.auto_start_init) ? data.auto_start_init : [],
       startTrigger: Boolean(data.start_trigger),
       settlementCount: Array.isArray(data.settlement) ? data.settlement.length : 0,
       settlementExtreCount: Array.isArray(data.settlement_extre) ? data.settlement_extre.length : 0,
@@ -3762,7 +3792,7 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
     <div class="pill-list">
       ${kindTagHtml("events")}
       <span class="pill">可重复触发: ${item.isReplay ? "是" : "否"}</span>
-      <span class="pill">本局开始即启动: ${item.autoStart ? "是" : "否"}</span>
+      ${formatEventAutoStartPills(item)}
       <span class="pill">启动后立即校验条件: ${item.startTrigger ? "是" : "否"}</span>
     </div>
     ${
@@ -4003,7 +4033,7 @@ const renderExplorer = () => {
                 : isEvent
                   ? `
                     <span class="pill">可重复触发: ${item.isReplay ? "是" : "否"}</span>
-                    <span class="pill">本局开始即启动: ${item.autoStart ? "是" : "否"}</span>
+                    ${formatEventAutoStartPills(item)}
                     <span class="pill">启动后立即校验条件: ${item.startTrigger ? "是" : "否"}</span>
                   `
                   : isAfterStory
