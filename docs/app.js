@@ -25,8 +25,8 @@ const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.1.8";
-const APP_UPDATED_AT = "2026-05-11";
+const APP_VERSION = "v0.1.9";
+const APP_UPDATED_AT = "2026-05-12";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -489,6 +489,24 @@ const typeLabelMap = translationData.typeLabelMap || {
   monster: "怪物",
   army: "军队",
   TREASURE: "奇珍",
+};
+const equipSlotLabelMap = {
+  accessory: "饰品",
+  weapon: "武器",
+  cloth: "服装",
+  animal_handling: "动物",
+};
+const equipSlotLabel = (value) => equipSlotLabelMap[value] || value;
+const equipTargetHtml = (value) => {
+  const values = Array.isArray(value) ? value : [value];
+  return values
+    .map((item) => {
+      const numericItem = Number(item);
+      return Number.isFinite(numericItem) && String(item).trim() !== ""
+        ? cardJumpHtml(numericItem, resolveCardName(numericItem))
+        : entityRefHtml(item);
+    })
+    .join("、");
 };
 const tableStateMap = translationData.tableStateMap || {};
 const actionTextMap = translationData.actionTextMap || {};
@@ -1538,6 +1556,22 @@ const mergeMutationEntries = (rawEntries = [], parsedObject = {}) => {
   return [...rawEntries, ...parsedEntries.filter((entry) => !existingKeys.has(entry.key))];
 };
 
+const mutationEntriesFromRawEntry = (entry) => {
+  if (!entry?.value || typeof entry.value !== "object") return [];
+  const rawEntries = entry.rawValueSnippet ? extractObjectEntriesFromSnippet(entry.rawValueSnippet) : [];
+  return rawEntries.length ? mergeMutationEntries(rawEntries, entry.value) : normalizeMutationEntries(entry.value);
+};
+
+const mutationEntryReadableText = (entry) => {
+  if (entry?.value && typeof entry.value === "object" && entry.rawValueSnippet) {
+    const rawEntries = extractObjectEntriesFromSnippet(entry.rawValueSnippet);
+    if (rawEntries.length) {
+      return rawEntries.map(({ key, value }) => `${key}: ${valueToReadableText(value)}`).join("；");
+    }
+  }
+  return valueToReadableText(entry?.value);
+};
+
 const renderChoiceBubbleBlocks = (resultEntries = [], actionEntries = []) => {
   const allEntries = [...(resultEntries || []), ...(actionEntries || [])];
   const groups = new Map();
@@ -1556,9 +1590,10 @@ const renderChoiceBubbleBlocks = (resultEntries = [], actionEntries = []) => {
     return groups.get(speakerKey);
   };
 
-  allEntries.forEach(({ key, value }) => {
+  allEntries.forEach((entry) => {
+    const { key, value } = entry;
     if (key === "choose" && value && typeof value === "object") {
-      Object.entries(value).forEach(([choiceKey, choiceText]) => {
+      mutationEntriesFromRawEntry(entry).forEach(({ key: choiceKey, value: choiceText }) => {
         if (typeof choiceText !== "string") return;
         const speakerKey = speakerTokenFromKey(choiceKey);
         ensureGroup(speakerKey).chooseTexts.push(String(choiceText));
@@ -1603,11 +1638,10 @@ const renderChoiceActionBlocks = (resultEntries = [], actionEntries = []) => {
   const allEntries = [...(resultEntries || []), ...(actionEntries || [])];
   const blocks = [];
 
-  allEntries.forEach(({ key, value }) => {
+  allEntries.forEach((entry) => {
+    const { key, value } = entry;
     if (key !== "choose" || !value || typeof value !== "object") return;
-    const optionEntries = Object.entries(value)
-      .filter(([, optionValue]) => typeof optionValue !== "string")
-      .map(([optionKey, optionValue]) => ({ key: optionKey, value: optionValue }));
+    const optionEntries = mutationEntriesFromRawEntry(entry).filter(({ value: optionValue }) => typeof optionValue !== "string");
 
     if (!optionEntries.length) return;
 
@@ -1653,14 +1687,15 @@ const renderOptionCaseBlocks = (actionEntries = []) => {
     });
   }
 
-  caseEntries.forEach(({ key, value }) => {
+  caseEntries.forEach((entry) => {
+    const { key, value, rawValueSnippet } = entry;
     const tag = key.split(":")[1];
     const optionText = optionTextByTag.get(tag);
-    const caseValue = value && typeof value === "object" ? value : {};
-    const promptText = caseValue.prompt && typeof caseValue.prompt === "object" ? promptValueText(caseValue.prompt) : "";
-    const caseActions = { ...caseValue };
-    delete caseActions.prompt;
-    const caseLines = summarizeMutationEntries(caseActions, "结果");
+    const caseActionEntries = mutationEntriesFromRawEntry(entry);
+    const promptEntry = caseActionEntries.find(({ key: caseKey }) => caseKey === "prompt");
+    const promptText = promptEntry?.value && typeof promptEntry.value === "object" ? promptValueText(promptEntry.value) : "";
+    const caseActions = caseActionEntries.filter(({ key: caseKey }) => caseKey !== "prompt");
+    const caseLines = summarizeMutationEntries(caseActions, "结果", rawValueSnippet || "");
 
     blocks.push(`<div class="readable-meta"><strong>分支 ${escapeHtml(tag)}${optionText ? `：${renderRichText(optionText)}` : ""}</strong></div>`);
     if (promptText) {
@@ -1807,16 +1842,30 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
         return `${prefix}：关闭事件：${ids.map((id) => eventJumpHtml(id, resolveEventName(id))).join(" / ")}`;
       },
     },
-      {
-        match: ({ key }) => key === "success" || key === "failed",
-        apply: () => null,
+    {
+      match: ({ key }) => key === "success" || key === "failed",
+      apply: () => null,
+    },
+    {
+      match: ({ key }) => key === "no_show",
+      apply: ({ value, rawValueSnippet }) => {
+        if (!value || typeof value !== "object") {
+          return `${prefix}：${staticActionText("no_show")}${mutationValueSuffix(value)}`;
+        }
+        const rawHiddenEntries = rawValueSnippet ? extractObjectEntriesFromSnippet(rawValueSnippet) : [];
+        const hiddenEntries = rawHiddenEntries.length ? mergeMutationEntries(rawHiddenEntries, value) : value;
+        const hiddenLines = summarizeMutationEntries(hiddenEntries, "结果", rawValueSnippet || rawSource).map((line) =>
+          line.replace(/^结果：/, ""),
+        );
+        return `${prefix}：${staticActionText("no_show")}：${hiddenLines.join("；")}`;
       },
-      {
-        match: ({ key }) => Boolean(staticActionText(key)),
-        apply: ({ key, value }) => {
-          const readableValue = key === "prompt" ? promptValueText(value) : valueToReadableText(value);
-          return `${prefix}：${staticActionText(key)}${mutationValueSuffix(value, { text: readableValue })}`;
-        },
+    },
+    {
+      match: ({ key }) => Boolean(staticActionText(key)),
+      apply: (entry) => {
+        const readableValue = entry.key === "prompt" ? promptValueText(entry.value) : mutationEntryReadableText(entry);
+        return `${prefix}：${staticActionText(entry.key)}${mutationValueSuffix(entry.value, { text: readableValue })}`;
+      },
     },
     {
       match: ({ key }) => key === "coin" || key === "金币",
@@ -1893,6 +1942,27 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       apply: () => null,
     },
     {
+      match: ({ key }) => /^s(\d+)\+equip_slot$/.test(key),
+      apply: ({ key, value }) => {
+        const [, slotId] = key.match(/^s(\d+)\+equip_slot$/);
+        return `${prefix}：s${slotId}额外添加${escapeHtml(equipSlotLabel(value))}槽位`;
+      },
+    },
+    {
+      match: ({ key }) => /^s(\d+)=equip_slot:(.+)$/.test(key),
+      apply: ({ key }) => {
+        const [, slotId, slotType] = key.match(/^s(\d+)=equip_slot:(.+)$/);
+        return `${prefix}：s${slotId}移除${escapeHtml(equipSlotLabel(slotType))}槽位`;
+      },
+    },
+    {
+      match: ({ key }) => /^s(\d+)~equip$/.test(key),
+      apply: ({ key, value }) => {
+        const [, slotId] = key.match(/^s(\d+)~equip$/);
+        return `${prefix}：s${slotId}脱掉${equipTargetHtml(value)}`;
+      },
+    },
+    {
       match: ({ key }) => /^s(\d+)\+equip$/.test(key),
       apply: ({ key, value }) => {
         const [, slotId] = key.match(/^s(\d+)\+equip$/);
@@ -1931,7 +2001,7 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
         return;
       }
     }
-    entries.push(`${prefix}：${entry.key}${isImplicitMutationValue(entry.value) ? "" : ` = ${valueToReadableText(entry.value)}`}`);
+    entries.push(`${prefix}：${entry.key}${isImplicitMutationValue(entry.value) ? "" : ` = ${mutationEntryReadableText(entry)}`}`);
   });
 
   return entries;
@@ -2364,6 +2434,8 @@ const conditionRuleHtml = (key, value, rawSource = "") => {
     [/^!have\.([^.]+)\.(.+)$/, (token, mark) => `不持有${entityLabelHtml(token)}的${escapeHtml(mark)}=${escapeHtml(valueToReadableText(value))}`],
     [/^s(\d+)\.is$/, (slotId) => noWrapHtml(`s${slotId}是：${entityLabelHtml(value)}`)],
     [/^!s(\d+)\.is$/, (slotId) => noWrapHtml(`s${slotId}不是：${entityLabelHtml(value)}`)],
+    [/^s(\d+)\.equip_slot:(.+)$/, (slotId, slotType) => `s${slotId}有${escapeHtml(equipSlotLabel(slotType))}槽位：${escapeHtml(valueToReadableText(value))}`],
+    [/^!s(\d+)\.equip_slot:(.+)$/, (slotId, slotType) => `s${slotId}没有${escapeHtml(equipSlotLabel(slotType))}槽位：${escapeHtml(valueToReadableText(value))}`],
     [/^s(\d+)\.(.+)$/, (slotId, token) => noWrapHtml(`s${slotId}是${entityRefHtml(token)}：${escapeHtml(valueToReadableText(value))}`)],
     [/^!s(\d+)\.(.+)$/, (slotId, token) => noWrapHtml(`s${slotId}不是${entityRefHtml(token)}：${escapeHtml(valueToReadableText(value))}`)],
   ];

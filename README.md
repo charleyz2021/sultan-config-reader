@@ -68,11 +68,9 @@ sultan-config-reader/
 这是一个纯静态站点，可以直接部署到：
 
 - GitHub Pages
-- Cloudflare Pages
 - 任意静态文件服务器
 
 如果用 GitHub Pages，直接把发布目录指向 `docs/` 即可。
-
 
 ## 如何使用
 
