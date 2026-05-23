@@ -6,6 +6,7 @@ const detailPane = document.querySelector("#detailPane");
 const searchInput = document.querySelector("#searchInput");
 const exactMatchInput = document.querySelector("#exactMatchInput");
 const tabs = [...document.querySelectorAll(".tab")];
+const tabsBar = document.querySelector(".tabs");
 const cardSubtabs = document.querySelector("#cardSubtabs");
 const riteSubtabs = document.querySelector("#riteSubtabs");
 const cardSubtabsButtons = [...document.querySelectorAll("[data-card-filter]")];
@@ -23,10 +24,12 @@ const cardPreviewContent = document.querySelector("#cardPreviewContent");
 const scrollTopBtn = document.querySelector("#scrollTopBtn");
 const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
+const heroStatus = document.querySelector(".hero__status");
+const heroStatusToggle = document.querySelector("#heroStatusToggle");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.1.9";
-const APP_UPDATED_AT = "2026-05-12";
+const APP_VERSION = "v0.2.0";
+const APP_UPDATED_AT = "2026-05-24";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -451,6 +454,22 @@ const extractTopLevelObjectSnippet = (raw, key) => {
   return cleaned.slice(markerIndex, braceEnd + 1);
 };
 
+const extractArrayObjectSnippetById = (raw, id) => {
+  const cleaned = raw || "";
+  const arrayStart = cleaned.indexOf("[");
+  if (arrayStart < 0) return "";
+  const arrayEnd = findMatchingBracket(cleaned, arrayStart);
+  if (arrayEnd < 0) return "";
+  const arrayBody = cleaned.slice(arrayStart + 1, arrayEnd);
+  return splitTopLevelObjects(arrayBody).find((snippet) => {
+    try {
+      return Number(parseJsoncText(snippet)?.id) === Number(id);
+    } catch {
+      return false;
+    }
+  }) || "";
+};
+
 const card = (html) => {
   const article = document.createElement("article");
   article.className = "entry-card";
@@ -472,6 +491,7 @@ const createIndices = () => ({
   cards: new Map(siteData.cards.map((item) => [item.id, item])),
   rites: new Map(siteData.rites.map((item) => [item.id, item])),
   events: new Map(siteData.events.map((item) => [item.id, item])),
+  loots: new Map((siteData.loots || []).map((item) => [item.id, item])),
   endings: new Map(siteData.endings.map((item) => [item.id, item])),
   afterStory: new Map((siteData.afterStory || []).map((item) => [item.id, item])),
   quests: new Map((siteData.quests || []).map((item) => [item.id, item])),
@@ -533,7 +553,7 @@ const ensureGlobalCounterCommentDictionary = () => {
   const current = siteData.commentDictionary || createEmptyCommentDictionary();
   if (current.extractedSources?.__all_counter_sources__) return;
   const fileMap = new Map();
-  [...(siteData.cards || []), ...(siteData.rites || []), ...(siteData.events || []), ...(siteData.endings || []), ...(siteData.afterStory || []), ...(siteData.quests || [])].forEach((item) => {
+  [...(siteData.cards || []), ...(siteData.rites || []), ...(siteData.events || []), ...(siteData.loots || []), ...(siteData.endings || []), ...(siteData.afterStory || []), ...(siteData.quests || [])].forEach((item) => {
     if (!item?.rawSource) return;
     const sourceKey = commentSourceKeyForItem(item);
     fileMap.set(sourceKey, item.rawSource);
@@ -606,6 +626,7 @@ const allEntries = () => [
   ...(siteData?.cards || []),
   ...(siteData?.rites || []),
   ...(siteData?.events || []),
+  ...(siteData?.loots || []),
   ...(siteData?.endings || []),
   ...(siteData?.afterStory || []),
   ...(siteData?.quests || []),
@@ -854,6 +875,9 @@ const buildSiteDataFromFileMap = (fileMap) => {
   const riteFiles = readDirectoryJsonFromMap(fileMap, rootPrefix, "rite");
   const eventFiles = readDirectoryJsonFromMap(fileMap, rootPrefix, "event");
   const afterStoryFiles = readDirectoryJsonFromMap(fileMap, rootPrefix, "after_story");
+  const lootFiles = readDirectoryJsonFromMap(fileMap, rootPrefix, "loot");
+  const lootRaw = fileMap.get(`${rootPrefix}loot.json`) || "";
+  const loot = lootRaw ? parseJsoncText(lootRaw) : {};
 
   const cardEntries = Object.values(cards);
   const cardSummaries = cardEntries
@@ -997,6 +1021,38 @@ const buildSiteDataFromFileMap = (fileMap) => {
     })
     .sort((a, b) => a.id - b.id);
 
+  const lootEntriesFromSingleFile = (Array.isArray(loot) ? loot : Object.values(loot || {}))
+    .filter((lootItem) => lootItem && typeof lootItem === "object")
+    .map((lootItem) => ({
+      data: lootItem,
+      sourcePath: "loot.json",
+      raw: extractTopLevelObjectSnippet(lootRaw, String(lootItem.id)) || extractArrayObjectSnippetById(lootRaw, lootItem.id) || JSON.stringify(lootItem, null, 2),
+    }));
+  const lootEntries = [
+    ...lootFiles.map(({ data, path: sourcePath, raw }) => ({ data, sourcePath, raw })),
+    ...lootEntriesFromSingleFile,
+  ];
+  const lootSummaries = lootEntries
+    .map(({ data: lootItem, sourcePath, raw }) => {
+      const rawSource =
+        raw ||
+        JSON.stringify(lootItem, null, 2);
+      return {
+        kind: "loots",
+        id: lootItem.id,
+        name: lootItem.name || "",
+        text: lootItem.name || "",
+        repeat: lootItem.repeat ?? 0,
+        type: lootItem.type ?? "",
+        items: Array.isArray(lootItem.item) ? lootItem.item : [],
+        itemEntries: extractFieldArrayEntries(rawSource, "item"),
+        sourcePath,
+        rawSource,
+        raw: lootItem,
+      };
+    })
+    .sort((a, b) => a.id - b.id);
+
   return {
     generatedAt: new Date().toISOString(),
     commentDictionary: createEmptyCommentDictionary(rootPrefix),
@@ -1004,6 +1060,7 @@ const buildSiteDataFromFileMap = (fileMap) => {
       totalCardCount: cardSummaries.length,
       riteCount: riteSummaries.length,
       eventCount: eventSummaries.length,
+      lootCount: lootSummaries.length,
       endingCount: endingSummaries.length,
       afterStoryCount: afterStoryFiles.length,
       questCount: questSummaries.length,
@@ -1012,8 +1069,8 @@ const buildSiteDataFromFileMap = (fileMap) => {
     cards: cardSummaries,
     rites: riteSummaries,
     events: eventSummaries,
+    loots: lootSummaries,
     endings: endingSummaries,
-    quests: questSummaries,
     afterStory: afterStoryFiles.map(({ data, path: sourcePath, raw }) => ({
       kind: "afterStory",
       id: data.id,
@@ -1030,6 +1087,7 @@ const buildSiteDataFromFileMap = (fileMap) => {
       extraEntries: extractFieldArrayEntries(raw, "extra"),
       extraCount: Array.isArray(data.extra) ? data.extra.length : 0,
     })),
+    quests: questSummaries,
   };
 };
 
@@ -1371,6 +1429,8 @@ const eventJumpHtml = (id, label) =>
   `<button class="jump jump--inline" data-tab="events" data-id="${id}" data-preview="event">${escapeHtml(label)}</button>`;
 const endingJumpHtml = (id, label) =>
   `<button class="jump jump--inline" data-tab="endings" data-id="${id}" data-preview="ending">${escapeHtml(label)}</button>`;
+const lootJumpHtml = (id, label) =>
+  `<button class="jump jump--inline" data-tab="loots" data-id="${id}" data-preview="loot">${escapeHtml(label)}</button>`;
 const normalizeQuestRefId = (rawId) => {
   const id = Number(rawId);
   if (!Number.isFinite(id)) return null;
@@ -1399,6 +1459,27 @@ const findQuestById = (rawId) => {
 const resolveRiteName = (id) => indices?.rites?.get(Number(id))?.name || getCommentRiteMap()[String(id)] || `ID ${id}`;
 const resolveEventName = (id) => indices?.events?.get(Number(id))?.text || getCommentEventMap()[String(id)] || `ID ${id}`;
 const resolveEndingName = (id) => indices?.endings?.get(Number(id))?.name || `ID ${id}`;
+const resolveLootName = (id) => indices?.loots?.get(Number(id))?.name || `ID ${id}`;
+const collectDirectIdsInOrder = (value) => {
+  if (Array.isArray(value)) {
+    return value.map((item) => Number(item)).filter(Number.isFinite);
+  }
+  if (typeof value === "number") return [value];
+  if (typeof value === "string" && /^\s*\[?\s*\d+(?:\s*,\s*\d+)*\s*\]?\s*$/.test(value)) {
+    return value
+      .replace(/^\s*\[/, "")
+      .replace(/\]\s*$/, "")
+      .split(",")
+      .map((item) => Number(item.trim()))
+      .filter(Number.isFinite);
+  }
+  return [];
+};
+const lootTargetListHtml = (value) => {
+  const ids = collectDirectIdsInOrder(value);
+  if (!ids.length) return escapeHtml(valueToReadableText(value));
+  return ids.map((id) => lootJumpHtml(id, `${id} · ${resolveLootName(id)}`)).join(" / ");
+};
 const resolveQuestName = (id) => findQuestById(id)?.name || `ID ${id}`;
 const resolveQuestLabel = (id) => {
   const quest = findQuestById(id);
@@ -1506,6 +1587,37 @@ const renderQuestShowCounterHtml = (showCounter, rawSource = "") => {
   const [, scope, counterId] = match;
   return renderCounterDisplayHtml(scope, counterId, rawSource);
 };
+
+const lootRepeatText = (value) => {
+  const count = Number(value);
+  if (!Number.isFinite(count) || count <= 0) return "未设置";
+  return `激活后执行 ${count} 次掉落`;
+};
+
+const lootTypeText = (value) =>
+  ({
+    2: "按权重随机掉落，可重复",
+    3: "按权重随机掉落，掉落的内容必新，没有必新不掉",
+    99: "loot内一口气全部掉落",
+  }[Number(value)] || `掉落方式 ${value || "未设置"}`);
+
+const lootItemTargetHtml = (entry) => {
+  const id = entry?.id;
+  const type = String(entry?.type || "").toLowerCase();
+  if (type === "card") return cardJumpHtml(id, `${id} · ${resolveCardName(id)}`);
+  if (type === "event") return eventJumpHtml(id, `${id} · ${resolveEventName(id)}`);
+  if (type === "rite") return riteJumpHtml(id, `${id} · ${resolveRiteName(id)}`);
+  if (type === "loot") return lootJumpHtml(id, `${id} · ${resolveLootName(id)}`);
+  return escapeHtml(id ?? "未设置");
+};
+
+const lootItemTypeText = (type) =>
+  ({
+    card: "卡牌",
+    event: "事件",
+    rite: "仪式",
+    loot: "随机池",
+  }[String(type || "").toLowerCase()] || textOrDash(type));
 
 const counterRuleText = (scope, name, operator, value, rawSource = "") => {
   const scopeLabel = scope === "global_counter" ? "全局计数器" : "计数器";
@@ -1887,8 +1999,15 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       apply: ({ key }) => `${prefix}：调整苏丹牌池：${escapeHtml(key.slice("sudan_pool.".length))}`,
     },
     {
-      match: ({ key }) => key === "loot" || key.startsWith("loot."),
-      apply: () => `${prefix}：调整战利品或归属标记`,
+      match: ({ key }) => key === "loot",
+      apply: ({ value }) => `${prefix}：触发随机池：${lootTargetListHtml(value)}`,
+    },
+    {
+      match: ({ key }) => key.startsWith("loot."),
+      apply: ({ key, value }) => {
+        const target = key.slice("loot.".length);
+        return `${prefix}：调整随机池标记：${lootTargetListHtml(target)}${mutationValueSuffix(value, { keepImplicit: true })}`;
+      },
     },
     {
       match: ({ key }) => key.startsWith("clean."),
@@ -2721,9 +2840,21 @@ const wrapScrollableSection = (html) => `<div class="detail-scrollbox">${html}</
 const hasJumpTargets = (rites, events) =>
   (Array.isArray(rites) && rites.length > 0) ||
   (Array.isArray(events) && events.length > 0);
+const normalizeEndingTextExtraEntries = (item) => {
+  const rawEntries = Array.isArray(item?.textExtra) && item.textExtra.length
+    ? item.textExtra
+    : (Array.isArray(item?.raw?.text_extra) ? item.raw.text_extra : []);
+  return rawEntries
+    .map((entry, index) => ({
+      ...entry,
+      rawSnippet: item?.textExtraEntries?.[index]?.rawSnippet || "",
+      conditionEntries: item?.textExtraEntries?.[index]?.conditionEntries || [],
+    }))
+    .filter((entry) => entry && typeof entry === "object" && String(entry.result_text || "").trim());
+};
 const hasEndingTextExtra = (entries) =>
   Array.isArray(entries) &&
-  entries.some((entry) => entry && typeof entry === "object" && (entry.result_text || hasConditionContent(entry.condition, entry.conditionEntries)));
+  entries.some((entry) => entry && typeof entry === "object" && String(entry.result_text || "").trim());
 const renderEndingTextExtra = (entries, rawSource = "") =>
   renderReadableEntries(entries, (entry, index) => `
     <div class="readable-item">
@@ -2733,11 +2864,7 @@ const renderEndingTextExtra = (entries, rawSource = "") =>
           ? `<div class="readable-meta">触发条件</div><div class="detail-sublist">${renderConditionLinesHtml(entry.condition || {}, { bullets: true, rawEntries: entry.conditionEntries || null, rawSource: entry.rawSnippet || rawSource })}</div>`
           : ""
       }
-      ${
-        entry.result_text
-          ? `<div class="readable-meta">文本：${renderRichText(entry.result_text)}</div>`
-          : `<div class="readable-meta">无文本</div>`
-      }
+      <div class="readable-meta">文本：${renderRichText(entry.result_text)}</div>
     </div>
   `);
 
@@ -2797,6 +2924,10 @@ const renderPreviewHtml = (tab, id) => {
   if (tab === "events") {
     const item = indices?.events?.get(Number(id));
     return item ? renderEventDetailHtml(item, { includeRaw: true }) : "";
+  }
+  if (tab === "loots") {
+    const item = indices?.loots?.get(Number(id));
+    return item ? renderLootDetailHtml(item, { includeRaw: true }) : "";
   }
   if (tab === "endings") {
     const item = indices?.endings?.get(Number(id));
@@ -2895,6 +3026,7 @@ const bindJumpEventsIn = (root) => {
           button.dataset.preview === "card" ||
           button.dataset.preview === "rite" ||
           button.dataset.preview === "event" ||
+          button.dataset.preview === "loot" ||
           button.dataset.preview === "ending" ||
           button.dataset.preview === "quest"
         ) {
@@ -2923,12 +3055,16 @@ const setImportStatus = (text, isError = false) => {
 
 const setupImportUi = () => {
   if (!hero) return;
+  if (heroStatus && !mobileMq.matches) {
+    heroStatus.classList.remove("is-collapsed");
+    heroStatusToggle?.setAttribute("aria-expanded", "true");
+    heroStatusToggle?.querySelector(".sr-only")?.replaceChildren(document.createTextNode("收起数据状态"));
+  }
   hero.querySelector("h1")?.replaceChildren(document.createTextNode("苏丹的游戏配置阅读器"));
   hero.querySelector(".hero__lead")?.replaceChildren(
     document.createTextNode("导入游戏的 config.zip 或 config 文件夹，浏览器会在本地解析这些配置文件。"),
   );
   appVersion?.replaceChildren(document.createTextNode(`${APP_VERSION} · 更新于 ${APP_UPDATED_AT}`));
-  document.querySelector("#summary h2")?.replaceChildren(document.createTextNode("概览"));
   document.querySelector("#explorer h2")?.replaceChildren(document.createTextNode("配置阅读器"));
   document.querySelector(".detail-modal__title")?.replaceChildren(document.createTextNode("详情信息"));
   detailModalBack && (detailModalBack.textContent = "返回");
@@ -2956,6 +3092,16 @@ const setupImportUi = () => {
   importZipBtn = document.querySelector("#importZipBtn");
   importFolderBtn = document.querySelector("#importFolderBtn");
   clearCacheBtn = document.querySelector("#clearCacheBtn");
+  document.querySelectorAll(".tabs, .subtabs").forEach((node) => {
+    bindHorizontalWheel(node);
+    bindDragScroll(node);
+  });
+  tabsBar?.addEventListener("scroll", queueTabsIndicatorUpdate, { passive: true });
+  heroStatusToggle?.addEventListener("click", () => {
+    const isCollapsed = heroStatus?.classList.toggle("is-collapsed");
+    heroStatusToggle.setAttribute("aria-expanded", String(!isCollapsed));
+    heroStatusToggle.querySelector(".sr-only")?.replaceChildren(document.createTextNode(isCollapsed ? "展开数据状态" : "收起数据状态"));
+  });
 
   importZipBtn?.addEventListener("click", () => zipInput?.click());
   importFolderBtn?.addEventListener("click", () => folderInput?.click());
@@ -2973,8 +3119,8 @@ const setupImportUi = () => {
     await cacheDelete(CACHE_KEY);
     siteData = null;
     indices = null;
-    summaryGrid.innerHTML = "";
     generatedAt.textContent = "";
+    renderSummary();
     explorerMeta.textContent = "尚未导入本地配置数据";
     explorerList.innerHTML = "";
     detailPane.innerHTML = `<div class="detail-pane__empty">先导入本地配置数据，然后从左侧选择一条配置查看详情。</div>`;
@@ -3055,7 +3201,7 @@ const migrateCachedData = (data) => {
         open_after_story: Boolean(item.openAfterStory),
       },
       rawSource: item.rawSource || "",
-      textExtra: item.textExtra || item.raw?.text_extra || [],
+      textExtra: Array.isArray(item.textExtra) && item.textExtra.length ? item.textExtra : (item.raw?.text_extra || []),
       textExtraEntries: item.textExtraEntries || [],
     })),
     quests: (data.quests || []).map((item) => ({
@@ -3067,6 +3213,12 @@ const migrateCachedData = (data) => {
       upgradePoint: item.upgradePoint ?? item.raw?.upgrade_point ?? 0,
       pre: item.pre ?? item.raw?.pre ?? 0,
       icon: item.icon || item.raw?.icon || "",
+    })),
+    loots: (data.loots || []).map((item) => ({
+      ...item,
+      sourcePath: item.sourcePath || "loot.json",
+      items: Array.isArray(item.items) ? item.items : (Array.isArray(item.raw?.item) ? item.raw.item : []),
+      itemEntries: item.itemEntries || extractFieldArrayEntries(item.rawSource || "", "item"),
     })),
   };
 };
@@ -3095,24 +3247,10 @@ const hydrateSiteData = async (data, sourceLabel, fingerprint, importFingerprint
   setImportStatus(`已载入本地数据：${sourceLabel}`);
 };
 
-const tryReuseCachedImport = async (importFingerprint, sourceLabel) => {
-  const cachedPayload = normalizeCachedPayload(await cacheGet(CACHE_KEY));
-  if (!cachedPayload?.data || !importFingerprint) return false;
-  if (cachedPayload.importFingerprint !== importFingerprint) return false;
-  siteData = cachedPayload.data;
-  indices = createIndices();
-  renderSummary();
-  renderExplorer();
-  setImportStatus(`已直接复用上次导入的数据：${sourceLabel}`);
-  return true;
-};
-
 const importZipFile = async (file) => {
   try {
     setImportBusy(true);
     const importFingerprint = fingerprintZipImport(file);
-    setImportStatus(`正在检查 ${file.name} 是否已经导入过…`);
-    if (await tryReuseCachedImport(importFingerprint, file.name)) return;
     setImportStatus(`正在导入 ${file.name}…`);
     const fileMap = await buildFileMapFromZip(file);
     const fingerprint = fingerprintFileMap(fileMap);
@@ -3130,8 +3268,6 @@ const importFolderFiles = async (files) => {
   try {
     setImportBusy(true);
     const importFingerprint = fingerprintFolderImport(files);
-    setImportStatus("正在检查配置文件夹是否已经导入过…");
-    if (await tryReuseCachedImport(importFingerprint, "配置文件夹")) return;
     setImportStatus("正在导入配置文件夹…");
     const fileMap = await buildFileMapFromFolder(files);
     const fingerprint = fingerprintFileMap(fileMap);
@@ -3145,25 +3281,157 @@ const importFolderFiles = async (files) => {
   }
 };
 
-const renderSummary = () => {
-  const items = [
-    ["全部卡牌", siteData.summary.totalCardCount || 0],
-    ["仪式", siteData.summary.riteCount],
-    ["事件", siteData.summary.eventCount],
-    ["结局", siteData.summary.endingCount],
-    ["后日谈", siteData.summary.afterStoryCount],
-    ["一千零一夜", siteData.summary.questCount || 0],
-  ];
+const navigationCounts = () => ({
+  all: siteData ? allEntries().length : 0,
+  cards: siteData?.cards?.length || 0,
+  rites: siteData?.rites?.length || 0,
+  events: siteData?.events?.length || 0,
+  loots: siteData?.loots?.length || 0,
+  endings: siteData?.endings?.length || 0,
+  afterStory: siteData?.afterStory?.length || 0,
+  quests: siteData?.quests?.length || 0,
+});
 
-  summaryGrid.innerHTML = "";
-  items.forEach(([label, value]) => {
-    const node = document.createElement("div");
-    node.className = "stat-card";
-    node.innerHTML = `<div class="stat-card__value">${value}</div><div class="stat-card__label">${label}</div>`;
-    summaryGrid.appendChild(node);
+const cardFilterCounts = () => ({
+  all: siteData?.cards?.length || 0,
+  sudan: (siteData?.cards || []).filter((item) => item.type === "sudan").length,
+  item: (siteData?.cards || []).filter((item) => item.type === "item").length,
+  char: (siteData?.cards || []).filter((item) => item.type === "char").length,
+});
+
+const riteFilterCounts = () => ({
+  all: siteData?.rites?.length || 0,
+  TREASURE: (siteData?.rites || []).filter((item) => item.type === "TREASURE").length,
+});
+
+const setNavigationLabel = (node, label, count) => {
+  const labelNode = Object.assign(document.createElement("span"), {
+    className: "nav-label",
+    textContent: label,
+  });
+  node.replaceChildren(
+    labelNode,
+    Object.assign(document.createElement("span"), {
+      className: "nav-count",
+      textContent: `(${count})`,
+    }),
+  );
+};
+
+const bindHorizontalWheel = (node) => {
+  node?.addEventListener(
+    "wheel",
+    (event) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      if (node.scrollWidth <= node.clientWidth) return;
+      event.preventDefault();
+      node.scrollLeft += event.deltaY;
+    },
+    { passive: false },
+  );
+};
+
+const bindDragScroll = (node) => {
+  if (!node) return;
+  let isPointerDown = false;
+  let isDragging = false;
+  let startX = 0;
+  let startScrollLeft = 0;
+  let suppressClick = false;
+
+  node.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0 || node.scrollWidth <= node.clientWidth) return;
+    isPointerDown = true;
+    isDragging = false;
+    suppressClick = false;
+    startX = event.clientX;
+    startScrollLeft = node.scrollLeft;
   });
 
-  generatedAt.textContent = `数据生成时间：${formatDateTime(siteData.generatedAt)}`;
+  node.addEventListener("pointermove", (event) => {
+    if (!isPointerDown) return;
+    const deltaX = event.clientX - startX;
+    if (!isDragging) {
+      if (Math.abs(deltaX) <= 10) return;
+      isDragging = true;
+      suppressClick = true;
+      node.classList.add("is-dragging");
+      node.setPointerCapture?.(event.pointerId);
+    }
+    event.preventDefault();
+    node.scrollLeft = startScrollLeft - deltaX;
+  });
+
+  const endDrag = (event) => {
+    if (!isPointerDown) return;
+    isPointerDown = false;
+    isDragging = false;
+    node.classList.remove("is-dragging");
+    node.releasePointerCapture?.(event.pointerId);
+  };
+
+  node.addEventListener("pointerup", endDrag);
+  node.addEventListener("pointercancel", endDrag);
+  node.addEventListener("mouseleave", endDrag);
+  node.addEventListener(
+    "click",
+    (event) => {
+      if (!suppressClick) return;
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClick = false;
+    },
+    true,
+  );
+};
+
+const updateTabsIndicator = () => {
+  if (!tabsBar) return;
+  const activeTab = tabs.find((node) => node.classList.contains("is-active"));
+  const label = activeTab?.querySelector(".nav-label");
+  if (!activeTab || !label) {
+    tabsBar.style.setProperty("--tabs-indicator-left", "0px");
+    tabsBar.style.setProperty("--tabs-indicator-width", "0px");
+    return;
+  }
+  const width = label.offsetWidth * 0.72;
+  const left = activeTab.offsetLeft + label.offsetLeft + (label.offsetWidth - width) / 2;
+  tabsBar.style.setProperty("--tabs-indicator-left", `${left}px`);
+  tabsBar.style.setProperty("--tabs-indicator-width", `${width}px`);
+};
+
+const queueTabsIndicatorUpdate = () => {
+  requestAnimationFrame(updateTabsIndicator);
+};
+
+const renderSummary = () => {
+  const counts = navigationCounts();
+  const tabLabels = {
+    all: "全部",
+    cards: "卡牌",
+    rites: "仪式",
+    events: "事件",
+    loots: "随机池",
+    endings: "结局",
+    afterStory: "后日谈",
+    quests: "一千零一夜",
+  };
+  tabs.forEach((tab) => setNavigationLabel(tab, tabLabels[tab.dataset.target] || tab.textContent, counts[tab.dataset.target] || 0));
+
+  const cardCounts = cardFilterCounts();
+  const cardLabels = { all: "全部卡牌", sudan: "苏丹卡", item: "物品", char: "角色" };
+  cardSubtabsButtons.forEach((tab) =>
+    setNavigationLabel(tab, cardLabels[tab.dataset.cardFilter] || tab.textContent, cardCounts[tab.dataset.cardFilter] || 0),
+  );
+
+  const riteCounts = riteFilterCounts();
+  const riteLabels = { all: "全部仪式", TREASURE: "奇珍" };
+  riteSubtabsButtons.forEach((tab) =>
+    setNavigationLabel(tab, riteLabels[tab.dataset.riteFilter] || tab.textContent, riteCounts[tab.dataset.riteFilter] || 0),
+  );
+
+  generatedAt.textContent = siteData ? `数据生成时间：${formatDateTime(siteData.generatedAt)}` : "";
+  queueTabsIndicatorUpdate();
 };
 
 const dataForTab = () => {
@@ -3181,6 +3449,7 @@ const dataForTab = () => {
       : siteData.rites.filter((item) => item.type === currentRiteFilter);
   }
   if (currentTab === "events") return siteData.events;
+  if (currentTab === "loots") return siteData.loots || [];
   if (currentTab === "endings") return siteData.endings;
   if (currentTab === "afterStory") return siteData.afterStory || [];
   if (currentTab === "quests") return siteData.quests || [];
@@ -3207,6 +3476,7 @@ const searchTokens = (entry) => {
       cards: "卡牌",
       rites: "仪式",
       events: "事件",
+      loots: "随机池",
       endings: "结局",
       afterStory: "后日谈",
       quests: "一千零一夜",
@@ -3231,6 +3501,7 @@ const kindLabelMap = {
   cards: "卡牌",
   rites: "仪式",
   events: "事件",
+  loots: "随机池",
   endings: "结局",
   afterStory: "后日谈",
   quests: "一千零一夜",
@@ -3558,6 +3829,7 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
 const renderEndingDetailHtml = (item, { includeRaw = true } = {}) => {
     ensureCommentDictionaryForItem(item);
     const endingSourceData = buildEndingSourceData(item);
+    const textExtraEntries = normalizeEndingTextExtraEntries(item);
     return `
     <div class="detail-pane__header">
       <h3>${renderRichTitle(item.id, item.name)}</h3>
@@ -3590,11 +3862,11 @@ const renderEndingDetailHtml = (item, { includeRaw = true } = {}) => {
           : ""
       }
       ${
-        hasEndingTextExtra(item.textExtra)
+        hasEndingTextExtra(textExtraEntries)
         ? `
           <details class="detail-pane__section">
             <summary>差分文本</summary>
-            <div>${wrapScrollableSection(renderEndingTextExtra((item.textExtra || []).map((entry, index) => ({ ...entry, rawSnippet: item.textExtraEntries?.[index]?.rawSnippet || "", conditionEntries: item.textExtraEntries?.[index]?.conditionEntries || [] })), item.rawSource || ""))}</div>
+            <div>${wrapScrollableSection(renderEndingTextExtra(textExtraEntries, item.rawSource || ""))}</div>
           </details>
         `
           : ""
@@ -3649,6 +3921,107 @@ const renderQuestTargetDetails = (targets = [], targetEntries = [], rawSource = 
           `;
         })
         .join("")}
+    </div>
+  `;
+};
+
+const renderLootItemDetails = (items = [], itemEntries = [], rawSource = "") =>
+  renderReadableEntries(items, (entry, index) => {
+    const rawMeta = itemEntries[index] || {};
+    const conditionHtml = hasConditionContent(entry.condition, rawMeta.conditionEntries)
+      ? renderConditionLinesHtml(entry.condition || {}, {
+          bullets: true,
+          rawEntries: rawMeta.conditionEntries || null,
+          rawSource: rawMeta.rawSnippet || rawSource,
+        })
+      : "";
+    return `
+      <div class="readable-item">
+        <strong>随机项 ${index + 1}</strong>
+        ${renderKvRowsHtml([
+          ["目标", lootItemTargetHtml(entry)],
+          ["类型", escapeHtml(lootItemTypeText(entry.type))],
+          ["数量", escapeHtml(textOrDash(entry.num))],
+          ["权重", escapeHtml(textOrDash(entry.weight))],
+        ])}
+        ${
+          conditionHtml
+            ? `<div class="readable-meta">掉落条件</div><div class="detail-sublist">${conditionHtml}</div>`
+            : `<div class="readable-meta">掉落条件：无</div>`
+        }
+      </div>
+    `;
+  });
+
+const renderLootDetailHtml = (item, { includeRaw = true } = {}) => {
+  ensureCommentDictionaryForItem(item);
+  const cardRefIds = new Set(
+    (item.items || [])
+      .filter((entry) => String(entry?.type || "").toLowerCase() === "card")
+      .map((entry) => Number(entry.id))
+      .filter(Number.isFinite),
+  );
+  collectConditionCardRefs({ item: item.items || [] }).forEach((entry) => cardRefIds.add(Number(entry.id)));
+  const cardRefs = [...cardRefIds]
+    .map((id) => {
+      const target = findCardById(id);
+      return target ? { id, label: `${id} · ${target.name}` } : null;
+    })
+    .filter(Boolean);
+  const counterRefs = [...collectCounterRefs(item.raw || {})].sort((a, b) => Number(a) - Number(b));
+
+  return `
+    <div class="detail-pane__header">
+      <h3>${renderRichTitle(item.id, item.name || "未命名随机池")}</h3>
+      <div class="entry-card__meta">${escapeHtml(item.sourcePath || "loot.json")}</div>
+    </div>
+    <p class="detail-pane__summary">随机池配置条目</p>
+    <div class="pill-list">
+      ${kindTagHtml("loots")}
+      <span class="pill">执行次数: ${escapeHtml(textOrDash(item.repeat))}</span>
+      <span class="pill">掉落方式: ${escapeHtml(textOrDash(item.type))}</span>
+      <span class="pill">项目: ${(item.items || []).length}条</span>
+    </div>
+    <div class="detail-pane__section">
+      <div class="detail-pane__kv">
+        <div class="detail-pane__card">
+          <strong>基础信息</strong>
+          ${renderKvRows([
+            ["ID", item.id],
+            ["名称", item.name || "未命名"],
+            ["执行次数", lootRepeatText(item.repeat)],
+            ["掉落方式", lootTypeText(item.type)],
+            ["项目数量", (item.items || []).length],
+          ])}
+        </div>
+      </div>
+      ${
+        (item.items || []).length
+          ? `
+            <details class="detail-pane__section">
+              <summary>随机项</summary>
+              <div>${wrapScrollableSection(renderLootItemDetails(item.items || [], item.itemEntries || [], item.rawSource || ""))}</div>
+            </details>
+          `
+          : ""
+      }
+      ${
+        cardRefs.length
+          ? `
+            <details class="detail-pane__section">
+              <summary>这条配置里提到的卡牌</summary>
+              <div class="detail-pane__card">
+                <strong>卡牌跳转</strong>
+                <div class="detail-sublist">
+                  ${renderJumpList(cardRefs, "cards", { preview: true })}
+                </div>
+              </div>
+            </details>
+          `
+          : ""
+      }
+      ${renderCounterReferenceSection(counterRefs, item.rawSource || "")}
+      ${includeRaw ? `<details class="detail-pane__section"><summary>原始配置</summary>${rawConfigBlock(item)}</details>` : ""}
     </div>
   `;
 };
@@ -4003,6 +4376,13 @@ const renderDetail = (item) => {
     return;
   }
 
+  if (kind === "loots") {
+    detailPane.innerHTML = renderLootDetailHtml(item);
+    syncDetailToModal();
+    bindJumpEvents();
+    return;
+  }
+
   if (kind === "endings") {
     detailPane.innerHTML = renderEndingDetailHtml(item);
     syncDetailToModal();
@@ -4030,6 +4410,7 @@ const listCardTitle = (item) => {
   if (item.kind === "cards") return `${item.id} · ${item.name}`;
   if (item.kind === "rites") return `${item.id} · ${item.name}`;
   if (item.kind === "events") return `${item.id} · ${item.text}`;
+  if (item.kind === "loots") return `${item.id} · ${item.name}`;
   if (item.kind === "afterStory") return `${item.id} · ${item.name}`;
   if (item.kind === "quests") return `${item.id} · ${item.name}`;
   return `${item.id} · ${item.name}`;
@@ -4039,6 +4420,7 @@ const listCardTitleHtml = (item) => {
   if (item.kind === "cards") return renderRichTitle(item.id, item.name);
   if (item.kind === "rites") return renderRichTitle(item.id, item.name);
   if (item.kind === "events") return renderRichTitle(item.id, item.text);
+  if (item.kind === "loots") return renderRichTitle(item.id, item.name);
   if (item.kind === "afterStory") return renderRichTitle(item.id, item.name);
   if (item.kind === "quests") return renderRichTitle(item.id, item.name);
   return renderRichTitle(item.id, item.name);
@@ -4060,23 +4442,24 @@ const renderExplorer = () => {
     selectedKey = items[0] ? itemSelectionKey(items[0]) : null;
   }
 
-    items.forEach((item) => {
-      const isCard = item.kind === "cards";
-      const isRite = item.kind === "rites";
-      const isEvent = item.kind === "events";
-      const isAfterStory = item.kind === "afterStory";
-        const isQuest = item.kind === "quests";
-        const material = isCard && item.type === "sudan" ? materialFromRare(item.rare) : null;
-          const effectivePostRiteEntries = isCard ? (item.postRiteEntries || extractFieldArrayEntries(item.rawSource || "", "post_rite")) : [];
-          const questTargetCount = isQuest ? (Array.isArray(item.target) ? item.target.length : 0) : 0;
-          const questPreId = normalizeQuestRefId(item.pre);
-          const questPreHtml =
-            isQuest && item.pre && Number(item.pre) > 0 && Number.isFinite(questPreId)
-              ? questJumpHtml(questPreId, resolveQuestShortLabel(questPreId))
-              : "";
-        const node = card(`
-        <div class="entry-card__header">
-          <h3>${listCardTitleHtml(item)}</h3>
+  items.forEach((item) => {
+    const isCard = item.kind === "cards";
+    const isRite = item.kind === "rites";
+    const isEvent = item.kind === "events";
+    const isLoot = item.kind === "loots";
+    const isAfterStory = item.kind === "afterStory";
+    const isQuest = item.kind === "quests";
+    const material = isCard && item.type === "sudan" ? materialFromRare(item.rare) : null;
+    const effectivePostRiteEntries = isCard ? (item.postRiteEntries || extractFieldArrayEntries(item.rawSource || "", "post_rite")) : [];
+    const questTargetCount = isQuest ? (Array.isArray(item.target) ? item.target.length : 0) : 0;
+    const questPreId = normalizeQuestRefId(item.pre);
+    const questPreHtml =
+      isQuest && item.pre && Number(item.pre) > 0 && Number.isFinite(questPreId)
+        ? questJumpHtml(questPreId, resolveQuestShortLabel(questPreId))
+        : "";
+    const node = card(`
+      <div class="entry-card__header">
+        <h3>${listCardTitleHtml(item)}</h3>
         ${
           material
             ? `<div class="${material.className}">${material.label}</div>`
@@ -4118,7 +4501,13 @@ const renderExplorer = () => {
                         <span class="pill">目标数: ${questTargetCount}</span>
                         ${questPreHtml ? `<span class="pill">前置: ${questPreHtml}</span>` : ""}
                       `
-                    : `
+                      : isLoot
+                        ? `
+                          <span class="pill">执行次数: ${escapeHtml(textOrDash(item.repeat))}</span>
+                          <span class="pill">掉落方式: ${escapeHtml(textOrDash(item.type))}</span>
+                          <span class="pill">项目: ${(item.items || []).length}条</span>
+                        `
+                        : `
                     <span class="pill">结局: ${item.id}</span>
                     <span class="pill">${escapeHtml(item.subName || "无副标题")}</span>
                   `
@@ -4141,6 +4530,7 @@ tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     tabs.forEach((node) => node.classList.remove("is-active"));
     tab.classList.add("is-active");
+    queueTabsIndicatorUpdate();
     currentTab = tab.dataset.target;
     if (currentTab !== "cards") {
       currentCardFilter = "all";
@@ -4183,6 +4573,7 @@ cardPreviewBack?.addEventListener("click", goBackCardPreview);
 cardPreviewClose?.addEventListener("click", closeCardPreview);
 scrollTopBtn?.addEventListener("click", scrollToTop);
 window.addEventListener("scroll", updateScrollTopButton, { passive: true });
+window.addEventListener("resize", queueTabsIndicatorUpdate);
 
 searchInput.addEventListener("input", renderExplorer);
 exactMatchInput?.addEventListener("change", renderExplorer);
@@ -4192,6 +4583,7 @@ const init = async () => {
   const cachedPayload = normalizeCachedPayload(await cacheGet(CACHE_KEY));
   siteData = window.SITE_DATA || cachedPayload?.data || null;
   if (!siteData) {
+    renderSummary();
     explorerMeta.textContent = "尚未导入本地配置数据";
     detailPane.innerHTML = `<div class="detail-pane__empty">先导入本地配置数据，然后从左侧选择一条配置查看详情。</div>`;
     setImportStatus("尚未导入本地配置数据。可导入 config.zip 或配置文件夹。");
