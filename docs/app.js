@@ -28,7 +28,7 @@ const heroStatus = document.querySelector(".hero__status");
 const heroStatusToggle = document.querySelector("#heroStatusToggle");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.2.0";
+const APP_VERSION = "v0.2.1";
 const APP_UPDATED_AT = "2026-05-24";
 
 let currentTab = "all";
