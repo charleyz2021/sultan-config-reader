@@ -958,25 +958,65 @@ body {
 .detail-pane details {
   margin-top: 16px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 12px;
   overflow: hidden;
-  background: rgba(7, 5, 4, 0.5);
+  background: rgba(7, 5, 4, 0.46);
+  transition: border-color 140ms ease, background-color 140ms ease;
+}
+
+.detail-pane details[open] {
+  border-color: rgba(214, 182, 110, 0.32);
+  background: rgba(7, 5, 4, 0.58);
 }
 
 .detail-pane summary {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
   list-style: none;
   cursor: pointer;
-  padding: 12px 14px;
+  min-height: 46px;
+  padding: 10px 14px;
   font-weight: 700;
   color: var(--accent-2);
-  background: rgba(214, 182, 110, 0.08);
+  background: linear-gradient(180deg, rgba(214, 182, 110, 0.09), rgba(214, 182, 110, 0.035));
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.detail-pane summary::marker {
+  content: "";
 }
 
 .detail-pane summary::-webkit-details-marker {
   display: none;
 }
 
+.detail-pane summary::after {
+  content: "";
+  flex: 0 0 auto;
+  width: 9px;
+  height: 9px;
+  margin-right: 3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  opacity: 0.82;
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 140ms ease, opacity 140ms ease;
+}
+
+.detail-pane details[open] > summary::after {
+  transform: rotate(225deg) translate(-2px, -1px);
+}
+
+.detail-pane summary:hover::after {
+  opacity: 1;
+}
+
 .detail-pane details > div {
+  border-top: 1px solid rgba(214, 182, 110, 0.12);
   padding: 14px;
 }
 

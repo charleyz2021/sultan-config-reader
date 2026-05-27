@@ -28,8 +28,8 @@ const heroStatus = document.querySelector(".hero__status");
 const heroStatusToggle = document.querySelector("#heroStatusToggle");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.2.1";
-const APP_UPDATED_AT = "2026-05-24";
+const APP_VERSION = "v0.2.2";
+const APP_UPDATED_AT = "2026-05-27";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -137,7 +137,9 @@ const renderRichText = (value) =>
       /&lt;cspace=([^&]+?)&gt;([\s\S]*?)&lt;\/cspace&gt;/g,
       (_match, spacing, inner) => `<span style="letter-spacing:${spacing}">${inner}</span>`,
     )
-    .replace(/&lt;size=\d+&gt;([\s\S]*?)&lt;\/size&gt;/g, "$1");
+    .replace(/&lt;\/?(?:b|i|u)&gt;/g, "")
+    .replace(/&lt;\/?font(?:=[^&<>]+)?&gt;/g, "")
+    .replace(/&lt;\/?size(?:=[^&<>]+)?&gt;/g, "");
 
 const renderRichTitle = (id, label) => `${escapeHtml(String(id))} · ${renderRichText(label || "")}`;
 
@@ -1656,7 +1658,7 @@ const promptValueText = (value) => {
 
 const isImplicitMutationValue = (value) => value === 1 || value === true || value === null || value === undefined;
 const mutationValueSuffix = (value, { text = valueToReadableText(value), keepImplicit = false } = {}) =>
-  (isImplicitMutationValue(value) && !keepImplicit) || text === "" ? "" : `：${escapeHtml(text)}`;
+  (isImplicitMutationValue(value) && !keepImplicit) || text === "" ? "" : `：${renderRichText(text)}`;
 
 const normalizeMutationEntries = (action = {}) =>
   Array.isArray(action) ? action : Object.entries(action || {}).map(([key, value]) => ({ key, value }));
@@ -1864,6 +1866,75 @@ const renderConfirmActionBlock = (value, allEntries, prefix) => {
   return blocks.join("");
 };
 
+const branchActionLabel = (key) => {
+  if (key === "success") return "成功后";
+  if (key === "failed") return "失败后";
+  return key;
+};
+
+const renderBranchActionBlock = (entry, prefix, rawSource = "") => {
+  const { key, value, rawValueSnippet } = entry;
+  const label = branchActionLabel(key);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return `${prefix}：${label}${mutationValueSuffix(value, { keepImplicit: true })}`;
+  }
+
+  const rawEntries = rawValueSnippet ? extractObjectEntriesFromSnippet(rawValueSnippet) : [];
+  const branchEntries = rawEntries.length ? mergeMutationEntries(rawEntries, value) : normalizeMutationEntries(value);
+  const textEntry = branchEntries.find(({ key: branchKey }) => branchKey === "text");
+  const nestedActionEntries = branchEntries.filter(({ key: branchKey }) => branchKey !== "text");
+  const nestedLines = summarizeMutationEntries(nestedActionEntries, "结果", rawValueSnippet || rawSource).map((line) =>
+    line.replace(/^结果：/, ""),
+  );
+  const blocks = [`<div class="readable-meta detail-sublist"><strong>${escapeHtml(label)}</strong></div>`];
+
+  if (textEntry?.value) {
+    blocks.push(`<div class="readable-meta detail-sublist">文本：${renderRichText(textEntry.value)}</div>`);
+  }
+  if (nestedLines.length) {
+    blocks.push(nestedLines.map((line) => `<div class="readable-meta detail-sublist">${line}</div>`).join(""));
+  }
+
+  return blocks.join("");
+};
+
+const stripResultPrefix = (line) => line.replace(/^结果：/, "");
+
+const nestedMutationEntries = (value, rawValueSnippet = "") => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const rawEntries = rawValueSnippet ? extractObjectEntriesFromSnippet(rawValueSnippet) : [];
+  return rawEntries.length ? mergeMutationEntries(rawEntries, value) : normalizeMutationEntries(value);
+};
+
+const cardActionHtml = (id) => cardJumpHtml(id, `${id} · ${resolveCardName(id)}`);
+const riteActionHtml = (id) => riteJumpHtml(id, `${id} · ${resolveRiteName(id)}`);
+
+const renderHiddenActionBlock = (labelKey, value, rawValueSnippet, prefix, rawSource = "") => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return `${prefix}：${staticActionText(labelKey)}${mutationValueSuffix(value)}`;
+  }
+  const hiddenLines = summarizeMutationEntries(nestedMutationEntries(value, rawValueSnippet), "结果", rawValueSnippet || rawSource)
+    .map(stripResultPrefix)
+    .filter(Boolean);
+  return hiddenLines.length
+    ? `${prefix}：${staticActionText(labelKey)}：${hiddenLines.join("；")}`
+    : `${prefix}：${staticActionText(labelKey)}`;
+};
+
+const renderDelayActionBlock = (value, rawValueSnippet, prefix, rawSource = "") => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return `${prefix}：${staticActionText("delay")}${mutationValueSuffix(value)}`;
+  }
+  const entries = nestedMutationEntries(value, rawValueSnippet);
+  const delayedEntries = entries.filter(({ key }) => key !== "id" && key !== "round");
+  const round = value.round ?? entries.find(({ key }) => key === "round")?.value;
+  const delayedLines = summarizeMutationEntries(delayedEntries, "结果", rawValueSnippet || rawSource)
+    .map(stripResultPrefix)
+    .filter(Boolean);
+  const roundText = round === undefined || round === null || round === "" ? "" : `${escapeHtml(valueToReadableText(round))}回合`;
+  return `${prefix}：延迟${roundText}执行${delayedLines.length ? `：${delayedLines.join("；")}` : ""}`;
+};
+
 const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = "") => {
   const entries = [];
   const actionEntries = normalizeMutationEntries(action);
@@ -1873,7 +1944,7 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       match: ({ key }) => key === "rite",
       apply: ({ value }) => {
         const ids = collectIdsFromValue(value);
-        return `${prefix}：出现仪式：${ids.map((id) => riteJumpHtml(id, resolveRiteName(id))).join(" / ")}`;
+        return `${prefix}：生成仪式：${ids.map(riteActionHtml).join(" / ")}`;
       },
     },
     {
@@ -1901,16 +1972,16 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
           const [first, ...rest] = value;
           const label =
             typeof first === "number" || (typeof first === "string" && /^\d+$/.test(first))
-              ? cardJumpHtml(Number(first), resolveCardName(Number(first)))
+              ? cardActionHtml(Number(first))
               : escapeHtml(valueToReadableText(first));
           const suffix = rest.length ? ` ${escapeHtml(rest.map((item) => valueToReadableText(item)).join(" "))}` : "";
-          return `${prefix}：获得卡牌：${label}${suffix}`;
+          return `${prefix}：生成卡牌：${label}${suffix}`;
         }
         const ids = collectIdsFromValue(value);
         if (ids.length) {
-          return `${prefix}：获得卡牌：${ids.map((id) => cardJumpHtml(id, resolveCardName(id))).join(" / ")}`;
+          return `${prefix}：生成卡牌：${ids.map(cardActionHtml).join(" / ")}`;
         }
-        return `${prefix}：获得卡牌：${escapeHtml(valueToReadableText(value))}`;
+        return `${prefix}：生成卡牌：${escapeHtml(valueToReadableText(value))}`;
       },
     },
     {
@@ -1956,21 +2027,21 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
     },
     {
       match: ({ key }) => key === "success" || key === "failed",
-      apply: () => null,
+      apply: (entry) => actionEntries.some(({ key: actionKey }) => actionKey === "confirm")
+        ? null
+        : renderBranchActionBlock(entry, prefix, rawSource),
+    },
+    {
+      match: ({ key }) => key === "delay",
+      apply: ({ value, rawValueSnippet }) => renderDelayActionBlock(value, rawValueSnippet, prefix, rawSource),
     },
     {
       match: ({ key }) => key === "no_show",
-      apply: ({ value, rawValueSnippet }) => {
-        if (!value || typeof value !== "object") {
-          return `${prefix}：${staticActionText("no_show")}${mutationValueSuffix(value)}`;
-        }
-        const rawHiddenEntries = rawValueSnippet ? extractObjectEntriesFromSnippet(rawValueSnippet) : [];
-        const hiddenEntries = rawHiddenEntries.length ? mergeMutationEntries(rawHiddenEntries, value) : value;
-        const hiddenLines = summarizeMutationEntries(hiddenEntries, "结果", rawValueSnippet || rawSource).map((line) =>
-          line.replace(/^结果：/, ""),
-        );
-        return `${prefix}：${staticActionText("no_show")}：${hiddenLines.join("；")}`;
-      },
+      apply: ({ value, rawValueSnippet }) => renderHiddenActionBlock("no_show", value, rawValueSnippet, prefix, rawSource),
+    },
+    {
+      match: ({ key }) => key === "no_prompt",
+      apply: ({ value, rawValueSnippet }) => renderHiddenActionBlock("no_prompt", value, rawValueSnippet, prefix, rawSource),
     },
     {
       match: ({ key }) => Boolean(staticActionText(key)),
@@ -2028,8 +2099,10 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       match: ({ key }) => key.startsWith("table.clean."),
       apply: ({ key, value }) => {
         const target = key.slice("table.clean.".length);
+        const numericTarget = Number(target);
+        const targetHtml = Number.isFinite(numericTarget) ? cardJumpHtml(numericTarget, target) : entityRefHtml(target);
         const suffix = mutationValueSuffix(value, { keepImplicit: true });
-        return `${prefix}：移除${entityRefHtml(target)}${suffix === "：1" ? "" : suffix}`;
+        return `${prefix}：移除${targetHtml}${suffix}`;
       },
     },
     {
@@ -4053,7 +4126,7 @@ const renderQuestDetailHtml = (item, { includeRaw = true } = {}) => {
           ${renderKvRowsHtml([
             ["ID", escapeHtml(textOrDash(item.id))],
             ["名称", escapeHtml(item.name || "无")],
-            ["升级点", escapeHtml(textOrDash(item.upgradePoint))],
+            ["命运点", escapeHtml(textOrDash(item.upgradePoint))],
             ["目标数", escapeHtml(textOrDash(targetCount))],
             ["前置条目", preQuestHtml],
             ...(item.icon ? [["图标", renderQuestIconHtml(item.icon)]] : []),
