@@ -28,8 +28,8 @@ const heroStatus = document.querySelector(".hero__status");
 const heroStatusToggle = document.querySelector("#heroStatusToggle");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.2.2";
-const APP_UPDATED_AT = "2026-05-27";
+const APP_VERSION = "v0.2.3";
+const APP_UPDATED_AT = "2026-05-29";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -129,6 +129,9 @@ const escapeHtml = (value) =>
 
 const renderRichText = (value) =>
   escapeHtml(value || "")
+    .replace(/&lt;\/?(?:b|i|u)&gt;/g, "")
+    .replace(/&lt;\/?font(?:=[^&<>]+)?&gt;/g, "")
+    .replace(/&lt;\/?size(?:=[^&<>]+)?&gt;/g, "")
     .replace(
       /&lt;color=(#[0-9a-fA-F]{6,8}|[a-zA-Z]+)&gt;([\s\S]*?)&lt;\/color&gt;/g,
       (_match, color, inner) => `<span style="color:${color}">${inner}</span>`,
@@ -136,10 +139,7 @@ const renderRichText = (value) =>
     .replace(
       /&lt;cspace=([^&]+?)&gt;([\s\S]*?)&lt;\/cspace&gt;/g,
       (_match, spacing, inner) => `<span style="letter-spacing:${spacing}">${inner}</span>`,
-    )
-    .replace(/&lt;\/?(?:b|i|u)&gt;/g, "")
-    .replace(/&lt;\/?font(?:=[^&<>]+)?&gt;/g, "")
-    .replace(/&lt;\/?size(?:=[^&<>]+)?&gt;/g, "");
+    );
 
 const renderRichTitle = (id, label) => `${escapeHtml(String(id))} · ${renderRichText(label || "")}`;
 
@@ -852,6 +852,8 @@ const summarizeSlots = (slots = {}, rawSlotEntries = []) =>
     condition: slot.condition || {},
     rawSnippet: rawSlotEntry?.rawValueSnippet || "",
     conditionEntries: rawSlotEntry ? extractRepeatedObjectEntries(rawSlotEntry.rawValueSnippet, "condition") : [],
+    pops: slot.pops || [],
+    popEntries: rawSlotEntry ? extractFieldArrayEntries(rawSlotEntry.rawValueSnippet, "pops") : [],
     isKey: Boolean(slot.is_key),
     isEmptyAllowed: Boolean(slot.is_empty),
     openAdsorb: Boolean(slot.open_adsorb),
@@ -1112,6 +1114,11 @@ const jumpTo = (tab, id) => {
   renderExplorer();
 };
 
+const cardJumpClass = (id) => {
+  const rare = Number(findCardById(id)?.rare);
+  return Number.isFinite(rare) ? ` jump--card jump--card-rare-${rare}` : " jump--card";
+};
+
 const renderJumpList = (items, tab, { preview = false } = {}) => {
   if (!items || items.length === 0) {
     return `<div class="muted">无</div>`;
@@ -1119,7 +1126,7 @@ const renderJumpList = (items, tab, { preview = false } = {}) => {
   return `<div class="jump-list">${items
     .map(
       (item) =>
-        `<button class="jump" data-tab="${tab}" data-id="${item.id}"${preview ? ` data-preview="${tab.slice(0, -1)}"` : ""}>${escapeHtml(item.label)}</button>`,
+        `<button class="jump${tab === "cards" ? cardJumpClass(item.id) : ""}" data-tab="${tab}" data-id="${item.id}"${preview ? ` data-preview="${tab.slice(0, -1)}"` : ""}>${escapeHtml(item.label)}</button>`,
     )
     .join("")}</div>`;
 };
@@ -1334,41 +1341,46 @@ const renderCounterReferenceSection = (ids, rawSource = "") => {
   const detailMap = collectCounterRefDetailsFromRaw(rawSource);
   return `
       <details class="detail-pane__section">
-        <summary>这条配置里提到的计数器</summary>
+        <summary>此条涉及的计数器对照（解析自注释，仅供参考）</summary>
         <div>${wrapScrollableSection(`
-          <div class="readable-list">
-            <div class="readable-item">
-              <strong>计数器对照（解析自注释，仅供参考）</strong>
-              <div class="kv-list">
-                ${ids
-                  .map((id) => {
-                    const label = resolveCounterLabel(id);
-                    const cases = fixedCounterIds.has(String(id)) ? [] : (detailMap.get(String(id)) || []);
-                    return `
-                      <div class="kv-row">
-                        <dt>${counterJumpHtml(id, `#${String(id)}`, rawSource)}</dt>
-                      <dd>
-                        <div>${escapeHtml(label || "未整理")}</div>
-                        ${
-                          cases.length
-                            ? `<div class="detail-sublist">${cases
-                                .map(
-                                  (item) => renderCounterCaseLine(item),
-                                )
-                                .join("")}</div>`
-                            : ""
-                        }
-                      </dd>
-                    </div>
-                    `;
-                  })
-                  .join("")}
-              </div>
-            </div>
+          <div class="kv-list">
+            ${ids
+              .map((id) => {
+                const label = resolveCounterLabel(id);
+                const cases = fixedCounterIds.has(String(id)) ? [] : (detailMap.get(String(id)) || []);
+                return `
+                  <div class="kv-row">
+                    <dt>${counterJumpHtml(id, `#${String(id)}`, rawSource)}</dt>
+                  <dd>
+                    <div>${escapeHtml(label || "未整理")}</div>
+                    ${
+                      cases.length
+                        ? `<div class="detail-sublist">${cases
+                            .map(
+                              (item) => renderCounterCaseLine(item),
+                            )
+                            .join("")}</div>`
+                        : ""
+                    }
+                  </dd>
+                </div>
+                `;
+              })
+              .join("")}
           </div>
         `)}</div>
       </details>
     `;
+};
+
+const renderCardReferenceSection = (cardRefs) => {
+  if (!cardRefs?.length) return "";
+  return `
+    <details class="detail-pane__section">
+      <summary>此条涉及的卡牌</summary>
+      <div>${wrapScrollableSection(renderJumpList(cardRefs, "cards", { preview: true }))}</div>
+    </details>
+  `;
 };
 
 const renderCounterPreviewHtml = (token) => {
@@ -1424,7 +1436,7 @@ const renderReadableEntries = (entries, formatter) => {
 };
 
 const cardJumpHtml = (id, label) =>
-  `<button class="jump jump--inline" data-tab="cards" data-id="${id}" data-preview="card">${escapeHtml(label)}</button>`;
+  `<button class="jump jump--inline${cardJumpClass(id)}" data-tab="cards" data-id="${id}" data-preview="card">${escapeHtml(label)}</button>`;
 const riteJumpHtml = (id, label) =>
   `<button class="jump jump--inline" data-tab="rites" data-id="${id}" data-preview="rite">${escapeHtml(label)}</button>`;
 const eventJumpHtml = (id, label) =>
@@ -1539,6 +1551,7 @@ const entityRefHtml = (rawToken) => {
 
 const entityLabelHtml = (rawId) => {
   const normalized = String(rawId).trim();
+  if (typeLabelMap[normalized]) return escapeHtml(typeLabelMap[normalized]);
   const id = Number(normalized);
   if (Number.isFinite(id)) {
     const numericTarget = findCardById(id);
@@ -1558,11 +1571,60 @@ const noWrapHtml = (content) => `<span class="inline-nowrap">${content}</span>`;
 const choiceSpeakerHtml = (rawKey) => {
   const parts = String(rawKey).split(".");
   const speaker = parts.at(-1) || rawKey;
+  const variants = characterVariantHtml(speaker);
+  if (variants) return variants;
   return entityRefHtml(speaker);
 };
 
 const popSpeakerHtml = (rawKey) => choiceSpeakerHtml(rawKey);
 const speakerTokenFromKey = (rawKey) => String(rawKey).split(".").at(-1) || String(rawKey);
+
+const characterVariantHtml = (rawTarget) => {
+  const target = String(rawTarget || "").trim();
+  const aliasCard = findCardById(entityAliasMap[target]);
+  const targetName = aliasCard?.name || target;
+  const wifeVariants = (siteData?.cards || [])
+    .filter((item) => item.name === targetName)
+    .sort((a, b) => Number(a.rare) - Number(b.rare) || Number(a.id) - Number(b.id));
+  return wifeVariants.length > 1 ? wifeVariants.map((item) => cardJumpHtml(item.id, item.name)).join(" / ") : "";
+};
+
+const popTargetHtml = (rawTarget) => {
+  const target = String(rawTarget || "").trim();
+  const variants = characterVariantHtml(target);
+  if (variants) return variants;
+  if (/^s\d+$/.test(target)) return `${escapeHtml(target)} 上的卡牌`;
+  if (/^\d+$/.test(target)) return cardJumpHtml(Number(target), resolveCardName(Number(target)));
+  return `带有${escapeHtml(target)}标签的卡牌`;
+};
+
+const isPopBubbleKey = (key) =>
+  key.startsWith("pop.") ||
+  key.startsWith("hand_pop.") ||
+  key.startsWith("rite_pop.") ||
+  /^think_pop(?:[_.]|$)/.test(key);
+
+const renderPopBubbleLine = (key, value) => {
+  const text = renderRichText(valueToReadableText(value));
+  const parts = String(key).split(".");
+  const command = parts[0];
+  const target = parts.at(-1) || "";
+  const typedThinkPopMatch = command.match(/^think_pop_(.+)$/);
+  if (typedThinkPopMatch) {
+    return `显示${escapeHtml(typedThinkPopMatch[1])}气泡：“${text}”`;
+  }
+  if (command === "think_pop") {
+    return `显示气泡：“${text}”`;
+  }
+  if (command === "hand_pop") {
+    return `当前手牌中${popTargetHtml(target)}显示气泡：“${text}”`;
+  }
+  if (command === "rite_pop") {
+    const riteId = target;
+    return `仪式 ${riteJumpHtml(riteId, resolveRiteName(riteId))} 图标上显示气泡：“${text}”`;
+  }
+  return `当前仪式中${popTargetHtml(target)}显示气泡：“${text}”`;
+};
 
 const readableCounterName = (name) => {
   const label = counterNameMap[name] || getCommentCounterMap()[String(name)];
@@ -1686,10 +1748,13 @@ const mutationEntryReadableText = (entry) => {
   return valueToReadableText(entry?.value);
 };
 
-const renderChoiceBubbleBlocks = (resultEntries = [], actionEntries = []) => {
+const renderChoiceBubbleBlocks = (resultEntries = [], actionEntries = [], { nested = false } = {}) => {
   const allEntries = [...(resultEntries || []), ...(actionEntries || [])];
   const groups = new Map();
   const order = [];
+  const popLines = [];
+  const lineClass = nested ? "readable-meta detail-sublist detail-sublist--nested" : "readable-meta detail-sublist";
+  const titleClass = nested ? "readable-meta detail-sublist" : "readable-meta";
 
   const ensureGroup = (speakerKey) => {
     if (!groups.has(speakerKey)) {
@@ -1715,33 +1780,28 @@ const renderChoiceBubbleBlocks = (resultEntries = [], actionEntries = []) => {
       return;
     }
 
-    if (key.startsWith("pop.") || key.startsWith("think_pop.")) {
-      const speakerKey = speakerTokenFromKey(key);
-      ensureGroup(speakerKey).bubbleTexts.push(valueToReadableText(value));
+    if (isPopBubbleKey(key)) {
+      popLines.push(renderPopBubbleLine(key, value));
+      return;
     }
   });
 
-  if (!order.length) return "";
+  if (!order.length && !popLines.length) return "";
 
-  const hasBubbleTexts = order.some(
-    (speakerKey) => groups.get(speakerKey).bubbleTexts.length || groups.get(speakerKey).chooseTexts.length,
-  );
   const blocks = [];
-  if (hasBubbleTexts) {
-    blocks.push(
-      `<div class="readable-meta">以下需要仪式中有对应卡牌时，于结算时每有一张符合条件的卡牌就触发一条对应人物的气泡。</div>`,
-    );
-  }
+  popLines.forEach((line) => {
+    blocks.push(`<div class="${lineClass}">${line}</div>`);
+  });
   order.forEach((speakerKey) => {
     const group = groups.get(speakerKey);
     if (group.chooseTexts.length || group.bubbleTexts.length) {
-      blocks.push(`<div class="readable-meta">选择</div>`);
+      blocks.push(`<div class="${titleClass}">选择</div>`);
     }
     group.chooseTexts.forEach((text) => {
-      blocks.push(`<div class="readable-meta detail-sublist">弹出提示：${group.speakerHtml}：“${escapeHtml(text)}”</div>`);
+      blocks.push(`<div class="${lineClass}">弹出提示：${group.speakerHtml}：“${escapeHtml(text)}”</div>`);
     });
     group.bubbleTexts.forEach((text) => {
-      blocks.push(`<div class="readable-meta detail-sublist">弹出提示：${group.speakerHtml}：“${escapeHtml(text)}”</div>`);
+      blocks.push(`<div class="${lineClass}">弹出提示：${group.speakerHtml}：“${escapeHtml(text)}”</div>`);
     });
   });
 
@@ -1909,6 +1969,20 @@ const nestedMutationEntries = (value, rawValueSnippet = "") => {
 const cardActionHtml = (id) => cardJumpHtml(id, `${id} · ${resolveCardName(id)}`);
 const riteActionHtml = (id) => riteJumpHtml(id, `${id} · ${resolveRiteName(id)}`);
 
+const renderPromptActionBlock = (label, lines = []) => {
+  const normalizedLines = lines.filter(Boolean);
+  return `<div class="prompt-action">
+    <div class="prompt-action__title">${escapeHtml(label)}</div>
+    ${
+      normalizedLines.length
+        ? `<div class="prompt-action__body">${normalizedLines
+            .map((line) => `<div class="prompt-action__line">${line}</div>`)
+            .join("")}</div>`
+        : ""
+    }
+  </div>`;
+};
+
 const renderHiddenActionBlock = (labelKey, value, rawValueSnippet, prefix, rawSource = "") => {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return `${prefix}：${staticActionText(labelKey)}${mutationValueSuffix(value)}`;
@@ -1916,9 +1990,7 @@ const renderHiddenActionBlock = (labelKey, value, rawValueSnippet, prefix, rawSo
   const hiddenLines = summarizeMutationEntries(nestedMutationEntries(value, rawValueSnippet), "结果", rawValueSnippet || rawSource)
     .map(stripResultPrefix)
     .filter(Boolean);
-  return hiddenLines.length
-    ? `${prefix}：${staticActionText(labelKey)}：${hiddenLines.join("；")}`
-    : `${prefix}：${staticActionText(labelKey)}`;
+  return `${prefix}：${renderPromptActionBlock(staticActionText(labelKey), hiddenLines)}`;
 };
 
 const renderDelayActionBlock = (value, rawValueSnippet, prefix, rawSource = "") => {
@@ -2044,6 +2116,13 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       apply: ({ value, rawValueSnippet }) => renderHiddenActionBlock("no_prompt", value, rawValueSnippet, prefix, rawSource),
     },
     {
+      match: ({ key }) => key === "prompt",
+      apply: ({ value }) => {
+        const promptText = promptValueText(value);
+        return `${prefix}：${renderPromptActionBlock(staticActionText("prompt"), promptText ? [renderRichText(promptText)] : [])}`;
+      },
+    },
+    {
       match: ({ key }) => Boolean(staticActionText(key)),
       apply: (entry) => {
         const readableValue = entry.key === "prompt" ? promptValueText(entry.value) : mutationEntryReadableText(entry);
@@ -2063,7 +2142,15 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
     },
     {
       match: ({ key }) => key.startsWith("hand_pop."),
-      apply: () => `${prefix}：将指定卡牌加入手牌或弹出到手牌`,
+      apply: () => null,
+    },
+    {
+      match: ({ key }) => /^sudan_pool\.(.+?)([+\-=])(.+)$/.test(key),
+      apply: ({ key }) => {
+        const [, target, op, mark] = key.match(/^sudan_pool\.(.+?)([+\-=])(.+)$/);
+        const opLabel = op === "+" ? "增加标记" : op === "-" ? "移除标记" : "设定标记";
+        return `${prefix}：池子里的${entityLabelHtml(target)} ${opLabel}：${escapeHtml(mark)}`;
+      },
     },
     {
       match: ({ key }) => key.startsWith("sudan_pool."),
@@ -2130,7 +2217,7 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       },
     },
     {
-      match: ({ key }) => key.startsWith("pop.") || key.startsWith("think_pop."),
+      match: ({ key }) => isPopBubbleKey(key),
       apply: () => null,
     },
     {
@@ -2424,33 +2511,26 @@ const renderActionResultNotes = (entry, rawMeta = {}) => {
   }
   const mergedResultEntries = mergeMutationEntries(rawMeta.resultEntries || [], entry.result || {});
   const resultLines = summarizeMutationEntries(mergedResultEntries, "结果", counterContextSource);
-  if (resultLines.length) {
+  const resultChoiceActionBlocks = renderChoiceActionBlocks(mergedResultEntries, []);
+  const resultChoiceBubbleBlocks = renderChoiceBubbleBlocks(mergedResultEntries, [], { nested: true });
+  if (resultLines.length || resultChoiceActionBlocks || resultChoiceBubbleBlocks) {
     blocks.push(
       `<div class="readable-meta"><strong>结果</strong></div>${resultLines
         .map((line) => `<div class="readable-meta detail-sublist">${line.replace(/^结果：/, "")}</div>`)
-        .join("")}`,
+        .join("")}${resultChoiceActionBlocks || ""}${resultChoiceBubbleBlocks || ""}`,
     );
   }
   const mergedActionEntries = mergeMutationEntries(rawMeta.actionEntries || [], entry.action || {});
   const optionCaseBlocks = renderOptionCaseBlocks(mergedActionEntries);
-  const choiceActionBlocks = renderChoiceActionBlocks(mergedResultEntries, mergedActionEntries);
+  const actionChoiceActionBlocks = renderChoiceActionBlocks([], mergedActionEntries);
+  const actionChoiceBubbleBlocks = renderChoiceBubbleBlocks([], mergedActionEntries, { nested: true });
   const actionLines = summarizeMutationEntries(mergedActionEntries, "动作", counterContextSource);
-  if (actionLines.length) {
+  if (actionLines.length || optionCaseBlocks || actionChoiceActionBlocks || actionChoiceBubbleBlocks) {
     blocks.push(
       `<div class="readable-meta"><strong>动作</strong></div>${actionLines
         .map((line) => `<div class="readable-meta detail-sublist">${line.replace(/^动作：/, "")}</div>`)
-        .join("")}`,
+        .join("")}${optionCaseBlocks || ""}${actionChoiceActionBlocks || ""}${actionChoiceBubbleBlocks || ""}`,
     );
-  }
-  if (optionCaseBlocks) {
-    blocks.push(optionCaseBlocks);
-  }
-  if (choiceActionBlocks) {
-    blocks.push(choiceActionBlocks);
-  }
-  const choiceBubbleBlocks = renderChoiceBubbleBlocks(mergedResultEntries, mergedActionEntries);
-  if (choiceBubbleBlocks) {
-    blocks.push(choiceBubbleBlocks);
   }
   if (!blocks.length) {
     blocks.push(`<div class="readable-meta">无额外效果</div>`);
@@ -2501,12 +2581,60 @@ const renderSettlementReadable = (entries, fallbackTitle, rawEntries = [], conte
     }),
   );
 
+const triggerCardTargetHtml = (value) => {
+  const ids = collectIdsFromValue(value);
+  if (ids.length) return ids.map((id) => cardJumpHtml(id, resolveCardName(id))).join(" / ");
+  if (Array.isArray(value)) return value.map((item) => entityLabelHtml(item)).join(" / ");
+  return entityLabelHtml(value);
+};
+
+const triggerRiteTargetHtml = (value) => {
+  const ids = collectIdsFromValue(value);
+  if (ids.length) return ids.map((id) => riteJumpHtml(id, resolveRiteName(id))).join(" / ");
+  return escapeHtml(valueToReadableText(value));
+};
+
+const triggerCounterTargetHtml = (scope, value, rawSource = "") => {
+  const ids = collectIdsFromValue(value);
+  if (ids.length) return ids.map((id) => renderCounterDisplayHtml(scope, id, rawSource)).join(" / ");
+  return escapeHtml(valueToReadableText(value));
+};
+
 const triggerTimingText = (key, value) => {
+  if (key === "card_born") {
+    return `生成卡牌 ${triggerCardTargetHtml(value)} 时`;
+  }
+  if (key === "card_clean") {
+    return `卡牌 ${triggerCardTargetHtml(value)} 被移除时`;
+  }
+  const cardCleanTagMatch = key.match(/^card_clean\.(.+)$/);
+  if (cardCleanTagMatch) {
+    return `带有${escapeHtml(cardCleanTagMatch[1])}标签的卡牌被移除时`;
+  }
+  if (key === "rite_start") {
+    return `仪式 ${triggerRiteTargetHtml(value)} 启动时`;
+  }
+  if (key === "rite_end") {
+    return Number(value) === 1 ? "任意仪式正常关闭时" : `仪式 ${triggerRiteTargetHtml(value)} 正常关闭时`;
+  }
+  if (key === "open_rite") {
+    return Number(value) === 1 ? "打开任意仪式界面时" : `打开仪式 ${triggerRiteTargetHtml(value)} 界面时`;
+  }
+  if (key === "open_rite_end") {
+    return Number(value) === 1 ? "关闭任意仪式界面时" : `关闭仪式 ${triggerRiteTargetHtml(value)} 界面时`;
+  }
+  if (key === "counter") {
+    return Number(value) === 1 ? "任意计数器发生变化时" : `${triggerCounterTargetHtml("counter", value)} 数值发生变化时`;
+  }
+  if (key === "global_counter") {
+    return Number(value) === 1 ? "任意全局计数器被设置时" : `${triggerCounterTargetHtml("global_counter", value)} 被设置时`;
+  }
   if (key === "round_begin_ba") {
     if (Array.isArray(value) && value.length >= 2) {
-      return `${value[0]}-${value[1]}回合后`;
+      return `每过${escapeHtml(valueToReadableText(value[0]))}~${escapeHtml(valueToReadableText(value[1]))}回合开始的时候`;
     }
-    return `${valueToReadableText(value)}回合后`;
+    const readableRound = valueToReadableText(value);
+    return Number(value) === 1 ? "每回合开始时" : `每过${escapeHtml(readableRound)}回合开始的时候`;
   }
   if (key === "round_end_ba") {
     if (Array.isArray(value) && value.length >= 2) {
@@ -2514,12 +2642,11 @@ const triggerTimingText = (key, value) => {
     }
     return `${valueToReadableText(value)}回合后的回合结束时`;
   }
+  if (key === "back_to_prev_round_end") {
+    return `回到上${escapeHtml(valueToReadableText(value))}回合时`;
+  }
   if (key === "round_begin") return "每回合开始时";
   if (key === "round_end") return "每回合结束时";
-  if (key === "rite_end") {
-    const ids = Array.isArray(value) ? value : [value];
-    return `以下仪式结束后：${ids.map((id) => riteJumpHtml(id, resolveRiteName(id))).join(" / ")}`;
-  }
   if (key === "rite") {
     return `场上有仪式：${riteJumpHtml(value, resolveRiteName(value))}`;
   }
@@ -2620,6 +2747,10 @@ const conditionRuleHtml = (key, value, rawSource = "") => {
     [/^have\.([^.]+)\.宰相$/, (token) => `${entityLabelHtml(token)}成为宰相：${escapeHtml(valueToReadableText(value))}`],
     [/^!have\.([^.]+)\.苏丹$/, (token) => `${entityLabelHtml(token)}没有成为苏丹：${escapeHtml(valueToReadableText(value))}`],
     [/^!have\.([^.]+)\.宰相$/, (token) => `${entityLabelHtml(token)}没有成为宰相：${escapeHtml(valueToReadableText(value))}`],
+    [/^have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `持有${entityLabelHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
+    [/^!have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `不持有${entityLabelHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
+    [/^hand_have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `手牌中${entityLabelHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
+    [/^!hand_have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `手牌中不满足${entityLabelHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
     [/^have\.([^.]+)\.(.+)=$/, (token, mark) => `持有${entityLabelHtml(token)}的${escapeHtml(mark)}=${escapeHtml(valueToReadableText(value))}`],
     [/^!have\.([^.]+)\.(.+)=$/, (token, mark) => `不持有${entityLabelHtml(token)}的${escapeHtml(mark)}=${escapeHtml(valueToReadableText(value))}`],
     [/^have\.([^.]+)\.(.+)$/, (token, mark) => `持有${entityLabelHtml(token)}的${escapeHtml(mark)}=${escapeHtml(valueToReadableText(value))}`],
@@ -2754,14 +2885,96 @@ const renderConditionLinesHtml = (condition, { bullets = true, rawEntries = null
 
 const renderSlotDetails = (slots) =>
   renderReadableEntries(slots, (slot) => `
-    <div class="readable-item">
+    <div class="readable-item readable-item--slot">
       <strong>${escapeHtml(slot.slotId)} · ${renderRichText(slot.text || "未命名槽位")}</strong>
-      <div class="detail-sublist">${renderConditionLinesHtml(slot.condition || {}, { bullets: false, rawEntries: slot.conditionEntries || null, rawSource: slot.rawSnippet || "" })}</div>
+      <div class="slot-rule">
+        <div class="readable-meta">条件</div>
+        <div class="detail-sublist">${renderConditionLinesHtml(slot.condition || {}, { bullets: false, rawEntries: slot.conditionEntries || null, rawSource: slot.rawSnippet || "" })}</div>
+      </div>
       <div class="readable-meta readable-meta--slot-footer">
         可空：${slot.isEmptyAllowed ? "是" : "否"}，敌对槽位：${slot.isEnemy ? "是" : "否"}${slot.openAdsorb ? "，开启吸入：是" : ""}
       </div>
+      ${renderSlotPops(slot)}
     </div>
   `);
+
+const renderSlotPops = (slot) => {
+  const pops = Array.isArray(slot.pops) ? slot.pops : [];
+  if (!pops.length) return "";
+  return `
+    <div class="detail-sublist">
+      <details class="detail-pane__section detail-pane__section--nested">
+        <summary>气泡提示</summary>
+        <div>
+          ${pops
+            .map((pop, index) => {
+              const rawMeta = slot.popEntries?.[index] || {};
+              const text = pop?.text || pop?.tips || pop?.result_text || pop?.prompt?.text || "";
+              const actionHtml = renderSlotPopAction(pop);
+              const conditionHtml = hasConditionContent(pop?.condition, rawMeta.conditionEntries)
+                ? `<div class="readable-meta detail-sublist">显示条件</div><div class="detail-sublist detail-sublist--nested">${renderConditionLinesHtml(pop.condition || {}, { bullets: true, rawEntries: rawMeta.conditionEntries || null, rawSource: rawMeta.rawSnippet || slot.rawSnippet || "" })}</div>`
+                : "";
+              return `
+                <div class="readable-meta detail-sublist">
+                  <strong>气泡 ${index + 1}</strong>
+                  ${text ? `<div class="detail-sublist">文本：${renderRichText(text)}</div>` : ""}
+                  ${conditionHtml}
+                  ${actionHtml}
+                </div>
+              `;
+            })
+            .join("")}
+        </div>
+      </details>
+    </div>
+  `;
+};
+
+const slotPopSelfHtml = (pop) => {
+  const condition = pop?.condition || {};
+  if (condition.is !== undefined) return entityRefHtml(condition.is);
+  const hasNegativeCondition = Object.keys(condition).some((key) => key.startsWith("!"));
+  if (hasNegativeCondition) return "该槽位卡牌";
+  const selfKeys = Object.keys(condition).filter((key) => condition[key] === 1 || condition[key] === true);
+  if (selfKeys.length === 1) {
+    const [selfKey] = selfKeys;
+    const variants = characterVariantHtml(selfKey);
+    if (variants) return variants;
+    const target = resolveCardTargetByToken(selfKey);
+    if (target) return cardJumpHtml(target.id, target.name);
+  }
+  return "该槽位卡牌";
+};
+
+const slotPopSpeakerHtml = (rawKey, selfHtml) => {
+  const target = speakerTokenFromKey(rawKey);
+  if (target === "self") return "该槽位卡牌";
+  const variants = characterVariantHtml(target);
+  if (variants) return variants;
+  return entityRefHtml(target);
+};
+
+const renderSlotPopAction = (pop) => {
+  const action = pop?.action || {};
+  if (!action || typeof action !== "object") return "";
+  const selfHtml = slotPopSelfHtml(pop);
+  const lines = [];
+
+  Object.entries(action).forEach(([key, value]) => {
+    if (key === "choose" && value && typeof value === "object") {
+      lines.push(`<div class="readable-meta detail-sublist">选择</div>`);
+      Object.entries(value).forEach(([choiceKey, choiceText]) => {
+        lines.push(`<div class="readable-meta detail-sublist detail-sublist--nested">弹出提示：${slotPopSpeakerHtml(choiceKey, selfHtml)}：“${renderRichText(choiceText)}”</div>`);
+      });
+      return;
+    }
+    if (isPopBubbleKey(key)) {
+      lines.push(`<div class="readable-meta detail-sublist">弹出提示：${slotPopSpeakerHtml(key, selfHtml)}：“${renderRichText(value)}”</div>`);
+    }
+  });
+
+  return lines.length ? lines.join("") : "";
+};
 
 const renderRandomTextDetails = (entries) =>
   Object.entries(entries || {})
@@ -2775,19 +2988,40 @@ const renderRandomTextDetails = (entries) =>
     )
     .join("");
 
+const diceCheckTypeMap = {
+  fight_result: {
+    label: "对抗检定",
+    hint: "骰子检定涉及减值",
+  },
+  normal_result: {
+    label: "普通检定",
+    hint: "骰子检定不涉及减值",
+  },
+};
+
+const infoTipHtml = (hint) =>
+  `<span class="info-tip" tabindex="0" role="img" aria-label="${escapeHtml(hint)}" title="${escapeHtml(hint)}">i</span>`;
+
+const diceCheckTypeHtml = (type) => {
+  const normalizedType = String(type || "");
+  const typeInfo = diceCheckTypeMap[normalizedType];
+  if (!typeInfo) return escapeHtml(textOrDash(type));
+  return `${escapeHtml(typeInfo.label)} ${infoTipHtml(typeInfo.hint)}`;
+};
+
 const renderRandomTextUpDetails = (entries) =>
   Object.entries(entries || {})
     .map(([key, item]) => {
       const rows = [];
-      if (item?.text) rows.push(["文本", item.text]);
-      if (item?.type) rows.push(["类型", item.type]);
-      if (item?.type_tips) rows.push(["类型说明", item.type_tips]);
-      if (item?.low_target !== undefined && item?.low_target !== null) rows.push(["最低目标", item.low_target]);
-      if (item?.low_target_tips) rows.push(["最低目标说明", item.low_target_tips]);
+      if (item?.text) rows.push(["文本", renderRichText(item.text)]);
+      if (item?.type) rows.push(["类型", diceCheckTypeHtml(item.type)]);
+      if (item?.type_tips) rows.push(["类型说明", renderRichText(item.type_tips)]);
+      if (item?.low_target !== undefined && item?.low_target !== null) rows.push(["最低目标", escapeHtml(textOrDash(item.low_target))]);
+      if (item?.low_target_tips) rows.push(["最低目标说明", renderRichText(item.low_target_tips)]);
       return `
         <div class="readable-item">
           <strong>${escapeHtml(key)}</strong>
-          ${renderKvRows(rows)}
+          ${renderKvRowsHtml(rows)}
         </div>
       `;
     })
@@ -3782,7 +4016,7 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
       hasRandomTextBlock
         ? `
           <details class="detail-pane__section">
-            <summary>随机文本</summary>
+            <summary>骰子检定文本</summary>
             <div>${wrapScrollableSection(`<div class="readable-list">${renderRandomTextDetails(item.randomText)}</div>`)}</div>
           </details>
         `
@@ -3792,7 +4026,7 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
       hasRandomTextUpBlock
         ? `
           <details class="detail-pane__section">
-            <summary>随机文本加成</summary>
+            <summary>骰子检定文本加成</summary>
             <div>${wrapScrollableSection(`<div class="readable-list">${renderRandomTextUpDetails(item.randomTextUp)}</div>`)}</div>
           </details>
         `
@@ -3868,23 +4102,7 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
         `
         : ""
     }
-    ${
-      hasCardRefs
-        ? `
-          <details class="detail-pane__section">
-            <summary>这条配置里提到的卡牌</summary>
-            <div>${wrapScrollableSection(`
-              <div class="readable-list">
-                <div class="readable-item">
-                  <strong>卡牌跳转</strong>
-                  ${renderJumpList(cardRefs, "cards", { preview: true })}
-                </div>
-              </div>
-            `)}</div>
-          </details>
-        `
-        : ""
-    }
+    ${hasCardRefs ? renderCardReferenceSection(cardRefs) : ""}
     ${renderCounterReferenceSection(counterRefs, item.rawSource)}
     ${
       includeRaw
@@ -4078,21 +4296,7 @@ const renderLootDetailHtml = (item, { includeRaw = true } = {}) => {
           `
           : ""
       }
-      ${
-        cardRefs.length
-          ? `
-            <details class="detail-pane__section">
-              <summary>这条配置里提到的卡牌</summary>
-              <div class="detail-pane__card">
-                <strong>卡牌跳转</strong>
-                <div class="detail-sublist">
-                  ${renderJumpList(cardRefs, "cards", { preview: true })}
-                </div>
-              </div>
-            </details>
-          `
-          : ""
-      }
+      ${cardRefs.length ? renderCardReferenceSection(cardRefs) : ""}
       ${renderCounterReferenceSection(counterRefs, item.rawSource || "")}
       ${includeRaw ? `<details class="detail-pane__section"><summary>原始配置</summary>${rawConfigBlock(item)}</details>` : ""}
     </div>
@@ -4252,23 +4456,7 @@ const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
         `
         : ""
     }
-    ${
-      hasCardRefs
-        ? `
-          <details class="detail-pane__section">
-            <summary>这条配置里提到的卡牌</summary>
-            <div>${wrapScrollableSection(`
-              <div class="readable-list">
-                <div class="readable-item">
-                  <strong>卡牌跳转</strong>
-                  ${renderJumpList(cardRefs, "cards", { preview: true })}
-                </div>
-              </div>
-            `)}</div>
-          </details>
-        `
-        : ""
-    }
+    ${hasCardRefs ? renderCardReferenceSection(cardRefs) : ""}
     ${renderCounterReferenceSection(counterRefs, item.rawSource)}
     ${
       includeRaw
@@ -4288,7 +4476,10 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
   const { nextRites, nextEvents } = buildJumpTargets(item.raw || {}, item.rawSource || "", item.nextRiteIds || [], item.nextEventIds || []);
   const nextEndings = buildEndingTargets(item.raw || {}, item.rawSource || []);
   const cardRefs = collectConditionCardRefs({
+    on: item.raw?.on || {},
+    onEntries: item.onEntries || [],
     condition: item.raw?.condition || {},
+    settlement_prior: item.raw?.settlement_prior || [],
     settlement: item.raw?.settlement || [],
     settlement_extre: item.raw?.settlement_extre || [],
   });
@@ -4389,23 +4580,7 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
         `
         : ""
     }
-    ${
-      hasCardRefs
-        ? `
-          <details class="detail-pane__section">
-            <summary>这条配置里提到的卡牌</summary>
-            <div>${wrapScrollableSection(`
-              <div class="readable-list">
-                <div class="readable-item">
-                  <strong>卡牌跳转</strong>
-                  ${renderJumpList(cardRefs, "cards", { preview: true })}
-                </div>
-              </div>
-            `)}</div>
-          </details>
-        `
-        : ""
-    }
+    ${hasCardRefs ? renderCardReferenceSection(cardRefs) : ""}
     ${renderCounterReferenceSection(counterRefs, item.rawSource)}
     ${
       includeRaw
