@@ -1273,6 +1273,7 @@ body {
 }
 
 .info-tip {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1288,11 +1289,46 @@ body {
   line-height: 1;
   vertical-align: 0.08em;
   cursor: help;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .info-tip:focus-visible {
   outline: 2px solid rgba(241, 228, 182, 0.5);
   outline-offset: 2px;
+}
+
+.info-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  z-index: 20;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  width: max-content;
+  max-width: min(260px, calc(100vw - 48px));
+  padding: 7px 10px;
+  border: 1px solid rgba(214, 182, 110, 0.34);
+  border-radius: 8px;
+  background: rgba(12, 8, 6, 0.96);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.28);
+  color: var(--ink);
+  font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", serif;
+  font-size: 0.82rem;
+  font-weight: 600;
+  line-height: 1.45;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: break-word;
+  transform: translateX(-50%) translateY(4px);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.info-tip:hover::after,
+.info-tip:focus::after,
+.info-tip:active::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
 }
 
 .detail-pane__summary,

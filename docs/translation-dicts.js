@@ -11,6 +11,14 @@
   entityAliasMap: {
     妻子: 2000006
   },
+  namePlaceholderMap: {
+    "xiaochou.name": "小筹的名字",
+    "player.name": "玩家的名字",
+    "table.宰相.name": "场上宰相的名字",
+    "table.被献祭.name": "场上被献祭者的名字",
+    "table.被牺牲.name": "场上被牺牲者的名字",
+    "table.被驱逐.name": "场上被驱逐者的名字"
+  },
   typeLabelMap: {
     char: "角色",
     item: "物品",
@@ -19,10 +27,12 @@
     army: "军队",
     TREASURE: "奇珍"
   },
-  tableStateMap: {
-    被献祭: "献祭追随者",
-    被牺牲: "牺牲追随者",
-    被驱逐: "驱逐追随者"
+  tableHaveSpecialCardCountLabels: {
+    sudan: "苏丹卡",
+    纵欲: "纵欲卡",
+    奢靡: "奢靡卡",
+    杀戮: "杀戮卡",
+    征服: "征服卡"
   },
   actionTextMap: {
     prompt: "显示提示文本",
@@ -47,4 +57,3 @@
     steam_achievement: "解锁成就"
   }
 };
-

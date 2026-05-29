@@ -28,8 +28,8 @@ const heroStatus = document.querySelector(".hero__status");
 const heroStatusToggle = document.querySelector("#heroStatusToggle");
 const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.2.3";
-const APP_UPDATED_AT = "2026-05-29";
+const APP_VERSION = "v0.2.4";
+const APP_UPDATED_AT = "2026-05-30";
 
 let currentTab = "all";
 let currentCardFilter = "all";
@@ -45,6 +45,8 @@ let importFolderBtn = null;
 let clearCacheBtn = null;
 let mobileDetailModalHistory = [];
 let cardPreviewHistory = [];
+let searchIndexCache = new WeakMap();
+let searchRenderTimer = null;
 
 const mobileMq = window.matchMedia("(max-width: 900px)");
 const CACHE_DB_NAME = "sultan-config-reader";
@@ -127,8 +129,14 @@ const escapeHtml = (value) =>
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;");
 
+const namePlaceholderMap = translationData.namePlaceholderMap || {};
+const renderNamePlaceholder = (match) => namePlaceholderMap[match] || match;
+
 const renderRichText = (value) =>
   escapeHtml(value || "")
+    .replace(/\b(?:table\.[^.。\s]+|xiaochou|player)\.name\b/g, renderNamePlaceholder)
+    .replace(/\btable\.[^.。\s]+\.gender\b/g, "TA")
+    .replace(/\b[\w.-]+\.gender\b/g, "TA")
     .replace(/&lt;\/?(?:b|i|u)&gt;/g, "")
     .replace(/&lt;\/?font(?:=[^&<>]+)?&gt;/g, "")
     .replace(/&lt;\/?size(?:=[^&<>]+)?&gt;/g, "")
@@ -530,7 +538,6 @@ const equipTargetHtml = (value) => {
     })
     .join("、");
 };
-const tableStateMap = translationData.tableStateMap || {};
 const actionTextMap = translationData.actionTextMap || {};
 const getCommentDictionary = () => siteData?.commentDictionary || {};
 const getCommentCounterMap = () => getCommentDictionary().counters || {};
@@ -1693,19 +1700,22 @@ const counterRuleText = (scope, name, operator, value, rawSource = "") => {
   return `${scopeLabel} ${readableCounterName(name)}${operator || "="}${readableValue}`;
 };
 
-const tableHaveRangeLabel = (name) => {
-  if (name === "打包的财物") return "打包财物";
-  return name;
-};
-
 const tableHaveCountText = (name, operator, value) => {
   const readableValue = valueToReadableText(value);
-  return `${name}人数${operator === "=" ? "＝" : operator}${readableValue}`;
+  return `场上有${name}标签的卡牌数量${operator === "=" ? "=" : operator}${readableValue}`;
 };
 
-const tableHaveStateText = (name) => {
-  if (tableStateMap[name]) return tableStateMap[name];
-  return `${name}闲置`;
+const tableHaveEqualCountText = (name, value) => {
+  const readableValue = valueToReadableText(value);
+  return `场上的${name}=${readableValue}`;
+};
+
+const tableHaveSpecialCardCountLabels = translationData.tableHaveSpecialCardCountLabels || {};
+
+const tableHaveSpecialCardCountText = (name, value) => {
+  const label = tableHaveSpecialCardCountLabels[name];
+  if (!label) return "";
+  return `持有${valueToReadableText(value)}张${label}`;
 };
 
 const staticActionText = (key) => actionTextMap[key] || "";
@@ -2093,9 +2103,18 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
     {
       match: ({ key }) => key === "event_off",
       apply: ({ value }) => {
+        if (isImplicitMutationValue(value)) return `${prefix}：关闭所有幕后`;
         const ids = collectIdsFromValue(value);
-        return `${prefix}：关闭事件：${ids.map((id) => eventJumpHtml(id, resolveEventName(id))).join(" / ")}`;
+        return ids.length
+          ? `${prefix}：关闭幕后：${ids.map((id) => eventJumpHtml(id, resolveEventName(id))).join(" / ")}`
+          : `${prefix}：关闭幕后${mutationValueSuffix(value, { keepImplicit: true })}`;
       },
+    },
+    {
+      match: ({ key }) => key === "delay_off",
+      apply: ({ value }) => isImplicitMutationValue(value)
+        ? `${prefix}：关闭所有delay`
+        : `${prefix}：关闭delay${mutationValueSuffix(value, { keepImplicit: true })}`,
     },
     {
       match: ({ key }) => key === "success" || key === "failed",
@@ -2172,13 +2191,14 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       apply: ({ key, value }) => {
         const target = key.slice("clean.".length);
         if (target === "rite") {
+          if (isImplicitMutationValue(value)) return `${prefix}：移除所有仪式`;
           const ids = collectIdsFromValue(value);
           return ids.length
-            ? `${prefix}：清理仪式：${ids.map((id) => riteJumpHtml(id, resolveRiteName(id))).join(" / ")}`
-            : `${prefix}：清理仪式：${escapeHtml(valueToReadableText(value))}`;
+            ? `${prefix}：移除仪式：${ids.map((id) => riteJumpHtml(id, resolveRiteName(id))).join(" / ")}`
+            : `${prefix}：移除仪式：${escapeHtml(valueToReadableText(value))}`;
         }
         return target === "rite"
-          ? `${prefix}：清理仪式：${riteJumpHtml(value, resolveRiteName(value))}`
+          ? `${prefix}：移除仪式：${riteJumpHtml(value, resolveRiteName(value))}`
           : `${prefix}：清理槽位或标记：${target}${mutationValueSuffix(value)}`;
       },
     },
@@ -2193,14 +2213,18 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       },
     },
     {
-      match: ({ key }) => /^table\.(\d+|[^.]+)([-=])(.+)$/.test(key),
+      match: ({ key }) => /^table\.(\d+|[^.]+)([+=-])(.+)$/.test(key),
       apply: ({ key, value }) => {
-        const [, target, separator, token] = key.match(/^table\.(\d+|[^.]+)([-=])(.+)$/);
+        const [, target, separator, token] = key.match(/^table\.(\d+|[^.]+)([+=-])(.+)$/);
         const normalizedTarget = String(target).trim();
         const numericTarget = Number(normalizedTarget);
         const targetHtml = Number.isFinite(numericTarget)
           ? cardJumpHtml(numericTarget, resolveCardName(numericTarget))
           : entityRefHtml(normalizedTarget);
+        if (Number.isFinite(numericTarget)) {
+          const opText = separator === "=" ? "＝" : escapeHtml(separator);
+          return `${prefix}：场上${targetHtml}的${escapeHtml(token)}${opText}${escapeHtml(valueToReadableText(value))}`;
+        }
         return `${prefix}：更新桌面标记：${targetHtml}${escapeHtml(separator)}${escapeHtml(token)}：${escapeHtml(valueToReadableText(value))}`;
       },
     },
@@ -2208,7 +2232,7 @@ const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = ""
       match: ({ key }) => key.startsWith("table."),
       apply: ({ key, value }) => {
         const target = key.slice("table.".length).replaceAll(".uprare", ".品级提升");
-        const cardMarkMatch = target.match(/^(\d+)([-=])(.+)$/);
+        const cardMarkMatch = target.match(/^(\d+)([+=-])(.+)$/);
         if (cardMarkMatch) {
           const [, cardId, separator, mark] = cardMarkMatch;
           return `${prefix}：更新桌面标记：${cardJumpHtml(Number(cardId), resolveCardName(Number(cardId)))}${escapeHtml(separator)}${escapeHtml(mark)}${mutationValueSuffix(value, { keepImplicit: true })}`;
@@ -2654,10 +2678,8 @@ const triggerTimingText = (key, value) => {
 };
 
 const formatFormulaCounterHtml = (scope, id, rawSource = "") => {
-  const label = resolveCounterLabel(id);
   const scopeLabel = scope === "global_counter" ? "全局计数器" : "计数器";
-  const counterHtml = counterJumpHtml(id, `${scopeLabel} #${String(id)}`, rawSource);
-  return label ? `${counterHtml}（${escapeHtml(label)}）` : counterHtml;
+  return counterJumpHtml(id, `${scopeLabel} #${String(id)}`, rawSource);
 };
 
 const formatFormulaTermHtml = (term, rawSource = "") => {
@@ -2722,13 +2744,22 @@ const formatFormulaExpressionHtml = (expression, rawSource = "") => {
 };
 
 const conditionRuleHtml = (key, value, rawSource = "") => {
-  const cardLabel = (id, prefix = "", suffix = "") => `${prefix}${entityLabelHtml(id)}${suffix}`;
+  const conditionEntityHtml = (token) => /^\d+$/.test(String(token)) ? entityLabelHtml(token) : escapeHtml(token);
+  const cardLabel = (id, prefix = "", suffix = "") => `${prefix}${conditionEntityHtml(id)}${suffix}`;
+  const tableHaveMarkTargetHtml = conditionEntityHtml;
+  const haveMarkText = (token, mark, negated = false, exactValue = false) => {
+    const target = conditionEntityHtml(token);
+    const readableValue = escapeHtml(valueToReadableText(value));
+    if (mark === "苏丹") return `${target}${negated ? "没有成为" : "成为"}苏丹`;
+    if (mark === "宰相") return `${target}${negated ? "没有成为" : "成为"}宰相`;
+    if (mark === "晋升") return `${target}${negated ? "没有" : "有"}晋升`;
+    if (!exactValue && isImplicitMutationValue(value)) return `${target}${negated ? "没有" : "有"}${escapeHtml(mark)}`;
+    return `${target}的${escapeHtml(mark)}${exactValue ? "=" : "："}${readableValue}`;
+  };
   const exactHandlers = {
     type: () => `类型：${escapeHtml(typeLabel(value))}`,
     is: () => noWrapHtml(`是：${entityLabelHtml(value)}`),
     "!is": () => noWrapHtml(`不是：${entityLabelHtml(value)}`),
-    "have.妻子": () => noWrapHtml(`${entityRefHtml("妻子")}存活`),
-    "!have.妻子": () => noWrapHtml(`${entityRefHtml("妻子")}已死`),
     "!table_have.追随者": () => "无追随者",
     "table_have.追随者=": () => `追随者＝${escapeHtml(valueToReadableText(value))}人`,
     "table_have.追随者.男性": () => `追随者.男性>=${escapeHtml(valueToReadableText(value))}人`,
@@ -2742,19 +2773,22 @@ const conditionRuleHtml = (key, value, rawSource = "") => {
     [/^s(\d+)\.uprare$/, (slotId) => `s${slotId}的品级提升：${escapeHtml(valueToReadableText(value))}`],
     [/^rare(>=|<=|>|<|=)$/, (operator) => `品级${operator === "=" ? "=" : operator}${escapeHtml(materialFromRare(Number(value)).label)}`],
     [/^s(\d+)\.图片$/, (slotId) => `s${slotId}替换过立绘`],
-    [/^table_have\.([^.]+)\.目的地$/, (token) => `目的地是${entityLabelHtml(token)}`],
-    [/^have\.([^.]+)\.苏丹$/, (token) => `${entityLabelHtml(token)}成为苏丹：${escapeHtml(valueToReadableText(value))}`],
-    [/^have\.([^.]+)\.宰相$/, (token) => `${entityLabelHtml(token)}成为宰相：${escapeHtml(valueToReadableText(value))}`],
-    [/^!have\.([^.]+)\.苏丹$/, (token) => `${entityLabelHtml(token)}没有成为苏丹：${escapeHtml(valueToReadableText(value))}`],
-    [/^!have\.([^.]+)\.宰相$/, (token) => `${entityLabelHtml(token)}没有成为宰相：${escapeHtml(valueToReadableText(value))}`],
-    [/^have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `持有${entityLabelHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
-    [/^!have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `不持有${entityLabelHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
-    [/^hand_have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `手牌中${entityLabelHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
-    [/^!hand_have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `手牌中不满足${entityLabelHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
-    [/^have\.([^.]+)\.(.+)=$/, (token, mark) => `持有${entityLabelHtml(token)}的${escapeHtml(mark)}=${escapeHtml(valueToReadableText(value))}`],
-    [/^!have\.([^.]+)\.(.+)=$/, (token, mark) => `不持有${entityLabelHtml(token)}的${escapeHtml(mark)}=${escapeHtml(valueToReadableText(value))}`],
-    [/^have\.([^.]+)\.(.+)$/, (token, mark) => `持有${entityLabelHtml(token)}的${escapeHtml(mark)}=${escapeHtml(valueToReadableText(value))}`],
-    [/^!have\.([^.]+)\.(.+)$/, (token, mark) => `不持有${entityLabelHtml(token)}的${escapeHtml(mark)}=${escapeHtml(valueToReadableText(value))}`],
+    [/^table_have\.(sudan|纵欲|奢靡|杀戮|征服)=$/, (token) => escapeHtml(tableHaveSpecialCardCountText(token, value))],
+    [/^table_have\.([^<>=.]+)=$/, (token) => escapeHtml(tableHaveEqualCountText(token, value))],
+    [/^table_have\.([^.]+)\.count(>=|<=|>|<|=)$/, (token, operator) => escapeHtml(tableHaveCountText(token, operator, value))],
+    [/^table_have\.([^.]+)\.([^<>=.]+)(>=|<=|>|<|=)$/, (token, mark, operator) =>
+      `${conditionEntityHtml(token)}的${escapeHtml(mark)}标签${operator === "=" ? "=" : operator}${escapeHtml(valueToReadableText(value))}`],
+    [/^table_have\.([^.]+)\.目的地$/, (token) => `目的地是${conditionEntityHtml(token)}`],
+    [/^have\.([^.]+)\.(苏丹|宰相|晋升)$/, (token, mark) => haveMarkText(token, mark)],
+    [/^!have\.([^.]+)\.(苏丹|宰相|晋升)$/, (token, mark) => haveMarkText(token, mark, true)],
+    [/^have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `持有${conditionEntityHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
+    [/^!have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `不持有${conditionEntityHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
+    [/^hand_have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `手牌中${conditionEntityHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
+    [/^!hand_have\.([^.]+)(>=|<=|>|<|=)$/, (token, operator) => `手牌中不满足${conditionEntityHtml(token)}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`],
+    [/^have\.([^.]+)\.(.+)=$/, (token, mark) => haveMarkText(token, mark, false, true)],
+    [/^!have\.([^.]+)\.(.+)=$/, (token, mark) => haveMarkText(token, mark, true, true)],
+    [/^have\.([^.]+)\.(.+)$/, (token, mark) => haveMarkText(token, mark)],
+    [/^!have\.([^.]+)\.(.+)$/, (token, mark) => haveMarkText(token, mark, true)],
     [/^s(\d+)\.is$/, (slotId) => noWrapHtml(`s${slotId}是：${entityLabelHtml(value)}`)],
     [/^!s(\d+)\.is$/, (slotId) => noWrapHtml(`s${slotId}不是：${entityLabelHtml(value)}`)],
     [/^s(\d+)\.equip_slot:(.+)$/, (slotId, slotType) => `s${slotId}有${escapeHtml(equipSlotLabel(slotType))}槽位：${escapeHtml(valueToReadableText(value))}`],
@@ -2786,7 +2820,7 @@ const conditionRuleHtml = (key, value, rawSource = "") => {
   const tableHaveRangeMatch = key.match(/^table_have\.(.+?)(>=|<=|>|<|=)$/);
   if (tableHaveRangeMatch) {
     const [, name, operator] = tableHaveRangeMatch;
-    return `${escapeHtml(tableHaveRangeLabel(name))}${operator === "=" ? "＝" : operator}${escapeHtml(valueToReadableText(value))}`;
+    return `场上的${escapeHtml(name)}${operator === "=" ? "=" : operator}${escapeHtml(valueToReadableText(value))}`;
   }
   const rangeMatch = key.match(/^(r\d+:[^<>=]+)(>=|<=|>|<|=)$/);
   if (rangeMatch) {
@@ -2817,21 +2851,29 @@ const conditionRuleHtml = (key, value, rawSource = "") => {
   }
   const matchers = [
     [/^!s(\d+)$/, (slot) => `s${slot}：空`],
-    [/^!have\.(\d+|[^.]+)(?:\.(.+))?$/, (id, mark = "") => `不存在${cardLabel(id)}${mark ? `的${escapeHtml(mark)}` : ""}`],
-    [/^have\.(\d+|[^.]+)(?:\.(.+))?$/, (id, mark = "") => `持有${cardLabel(id)}${mark ? `的${escapeHtml(mark)}` : ""}`],
+    [
+      /^!have\.(\d+|[^.]+)(?:\.(.+))?$/,
+      (id, mark = "") =>
+        mark
+          ? haveMarkText(id, mark, true)
+          : `${cardLabel(id)}死亡或不存在`,
+    ],
+    [/^have\.(\d+|[^.]+)(?:\.(.+))?$/, (id, mark = "") => mark ? haveMarkText(id, mark) : `${cardLabel(id)}存活`],
+    [/^!table_have\.(\d+|[^.]+)\.([^.]+)$/, (id, mark) => `${tableHaveMarkTargetHtml(id)}没有${escapeHtml(mark)}标签`],
+    [/^table_have\.(\d+|[^.]+)\.([^.]+)$/, (id, mark) => `${tableHaveMarkTargetHtml(id)}有${escapeHtml(mark)}标签`],
     [
       /^!table_have\.(\d+|[^.]+)(?:\.(.+))?$/,
       (id, mark = "") =>
         /^\d+$/.test(String(id))
-          ? `${entityLabelHtml(id)}已死${mark ? `，且不带有 ${escapeHtml(mark)}` : ""}`
-          : `${escapeHtml(tableHaveStateText(id)).replace(/闲置$/, "")}不闲置${mark ? `，且不带有 ${escapeHtml(mark)}` : ""}`,
+          ? `${entityLabelHtml(id)}已死`
+          : `${conditionEntityHtml(id)}不闲置`,
     ],
     [
       /^table_have\.(\d+|[^.]+)(?:\.(.+))?$/,
       (id, mark = "") =>
         /^\d+$/.test(String(id))
           ? `${entityLabelHtml(id)}闲置存活${mark ? `，且带有 ${escapeHtml(mark)}` : ""}`
-          : `${escapeHtml(tableHaveStateText(id))}${mark ? `，且带有 ${escapeHtml(mark)}` : ""}`,
+          : `${conditionEntityHtml(id)}闲置存活${mark ? `，且带有 ${escapeHtml(mark)}` : ""}`,
     ],
     [/^!hand_have\.(\d+|[^.]+)(?:\.(.+))?$/, (id, mark = "") => `手牌中不存在${cardLabel(id)}${mark ? `，且不带有 ${escapeHtml(mark)}` : ""}`],
     [/^hand_have\.(\d+|[^.]+)(?:\.(.+))?$/, (id, mark = "") => `手牌中存在${cardLabel(id)}${mark ? `，且带有 ${escapeHtml(mark)}` : ""}`],
@@ -3000,7 +3042,7 @@ const diceCheckTypeMap = {
 };
 
 const infoTipHtml = (hint) =>
-  `<span class="info-tip" tabindex="0" role="img" aria-label="${escapeHtml(hint)}" title="${escapeHtml(hint)}">i</span>`;
+  `<span class="info-tip" tabindex="0" role="img" aria-label="${escapeHtml(hint)}" data-tip="${escapeHtml(hint)}">i</span>`;
 
 const diceCheckTypeHtml = (type) => {
   const normalizedType = String(type || "");
@@ -3096,7 +3138,7 @@ const conditionLines = (node, depth = 0, rawEntries = null, rawSource = "") => {
       return [
         {
           depth,
-          html: `${escapeHtml(valueToReadableText(value.min))}≤${escapeHtml(tableHaveRangeLabel(value.name))}＜${escapeHtml(valueToReadableText(value.max))}`,
+          html: `${escapeHtml(valueToReadableText(value.min))}≤场上的${escapeHtml(value.name)}＜${escapeHtml(valueToReadableText(value.max))}`,
         },
       ];
     }
@@ -3426,6 +3468,7 @@ const setupImportUi = () => {
     await cacheDelete(CACHE_KEY);
     siteData = null;
     indices = null;
+    resetSearchIndex();
     generatedAt.textContent = "";
     renderSummary();
     explorerMeta.textContent = "尚未导入本地配置数据";
@@ -3547,6 +3590,7 @@ const normalizeCachedPayload = (payload) => {
 const hydrateSiteData = async (data, sourceLabel, fingerprint, importFingerprint) => {
   siteData = data;
   indices = createIndices();
+  resetSearchIndex();
   setImportStatus("正在写入本地缓存…");
   await cacheSet(CACHE_KEY, buildCachePayload({ data, fingerprint, importFingerprint, sourceLabel }));
   renderSummary();
@@ -3804,6 +3848,51 @@ const searchTokens = (entry) => {
   return [...values];
 };
 
+const resetSearchIndex = () => {
+  searchIndexCache = new WeakMap();
+};
+
+const searchSkipKeys = new Set([
+  "raw",
+  "rawSource",
+  "rawSnippet",
+  "rawValueSnippet",
+  "commentDictionary",
+  "extractedSources",
+]);
+
+const collectSearchTextParts = (value, parts, depth = 0) => {
+  if (value === null || value === undefined || value === "" || depth > 4) return;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    parts.push(String(value).toLowerCase());
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectSearchTextParts(item, parts, depth + 1));
+    return;
+  }
+  if (typeof value !== "object") return;
+  Object.entries(value).forEach(([key, nested]) => {
+    if (searchSkipKeys.has(key)) return;
+    parts.push(String(key).toLowerCase());
+    collectSearchTextParts(nested, parts, depth + 1);
+  });
+};
+
+const entrySearchIndex = (entry) => {
+  const cached = searchIndexCache.get(entry);
+  if (cached) return cached;
+  const tokens = searchTokens(entry);
+  const parts = [...tokens];
+  collectSearchTextParts(entry, parts);
+  const index = {
+    tokens,
+    text: [...new Set(parts.filter(Boolean))].join("\n"),
+  };
+  searchIndexCache.set(entry, index);
+  return index;
+};
+
 const kindLabelMap = {
   cards: "卡牌",
   rites: "仪式",
@@ -3822,11 +3911,11 @@ const kindTagHtml = (kind) => {
 const matches = (entry, keyword) => {
   if (!keyword) return true;
   const normalizedKeyword = keyword.toLowerCase();
+  const searchIndex = entrySearchIndex(entry);
   if (exactMatchInput?.checked) {
-    return searchTokens(entry).some((token) => token === normalizedKeyword);
+    return searchIndex.tokens.some((token) => token === normalizedKeyword);
   }
-  const haystack = JSON.stringify(entry).toLowerCase();
-  return haystack.includes(normalizedKeyword);
+  return searchIndex.text.includes(normalizedKeyword);
 };
 
 const renderCardDetailHtml = (item, { includeRaw = true } = {}) => {
@@ -4053,21 +4142,21 @@ const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
         : ""
     }
     ${
-      hasSettlementBlock
-        ? `
-          <details class="detail-pane__section">
-            <summary>结算规则</summary>
-            <div>${wrapScrollableSection(renderSettlementReadable(item.raw?.settlement || [], "结算", item.settlementEntries || [], item.rawSource || ""))}</div>
-          </details>
-        `
-        : ""
-    }
-    ${
       hasSettlementPriorBlock
         ? `
           <details class="detail-pane__section">
             <summary>前置结算</summary>
             <div>${wrapScrollableSection(renderSettlementReadable(item.raw?.settlement_prior || [], "前置结算", item.settlementPriorEntries || [], item.rawSource || ""))}</div>
+          </details>
+        `
+        : ""
+    }
+    ${
+      hasSettlementBlock
+        ? `
+          <details class="detail-pane__section">
+            <summary>结算规则</summary>
+            <div>${wrapScrollableSection(renderSettlementReadable(item.raw?.settlement || [], "结算", item.settlementEntries || [], item.rawSource || ""))}</div>
           </details>
         `
         : ""
@@ -4774,6 +4863,11 @@ const renderExplorer = () => {
   renderDetail(items.find((item) => itemSelectionKey(item) === selectedKey) || null);
 };
 
+const scheduleRenderExplorer = () => {
+  window.clearTimeout(searchRenderTimer);
+  searchRenderTimer = window.setTimeout(renderExplorer, 120);
+};
+
 tabs.forEach((tab) => {
   tab.addEventListener("click", () => {
     tabs.forEach((node) => node.classList.remove("is-active"));
@@ -4823,8 +4917,8 @@ scrollTopBtn?.addEventListener("click", scrollToTop);
 window.addEventListener("scroll", updateScrollTopButton, { passive: true });
 window.addEventListener("resize", queueTabsIndicatorUpdate);
 
-searchInput.addEventListener("input", renderExplorer);
-exactMatchInput?.addEventListener("change", renderExplorer);
+searchInput.addEventListener("input", scheduleRenderExplorer);
+exactMatchInput?.addEventListener("change", scheduleRenderExplorer);
 
 const init = async () => {
   setupImportUi();
@@ -4838,6 +4932,7 @@ const init = async () => {
     return;
   }
   indices = createIndices();
+  resetSearchIndex();
   renderSummary();
   renderExplorer();
   setImportStatus(
