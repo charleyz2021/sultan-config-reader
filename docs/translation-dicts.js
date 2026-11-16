@@ -1,4 +1,18 @@
-﻿window.SULTAN_TRANSLATIONS = {
+﻿/*
+ * 阅读器翻译字典
+ *
+ * app.js 里的解析逻辑只负责识别配置语法；这里集中维护中文文案、别名、类型名和特殊标签。
+ * 这样新增翻译时通常只需要改这份表，不必进入复杂的解析/渲染函数。
+ *
+ * 字段说明：
+ * - counterNameMap：固定计数器 ID 的显示名。
+ * - entityAliasMap：把“妻子”等标签映射到代表性卡牌，用于需要预览卡牌的场景。
+ * - namePlaceholderMap：把配置文本里的 xxx.name 占位符替换成人类可读文本。
+ * - typeLabelMap：把 char/item/sudan 等内部类型翻译成界面标签。
+ * - tableHaveSpecialCardCountLabels：处理 table_have.xxx= 里苏丹卡类型的特殊计数文案。
+ * - actionTextMap：action 键名的基础中文翻译，复杂动作仍由 app.js 组合说明。
+ */
+window.SULTAN_TRANSLATIONS = {
   counterNameMap: {
     7100001: "善名",
     7100002: "恶名",

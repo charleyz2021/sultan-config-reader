@@ -1,9 +1,22 @@
-﻿const summaryGrid = document.querySelector("#summaryGrid");
+﻿/**
+ * 苏丹的游戏配置阅读器
+ *
+ * 代码分层：
+ * 1. DOM 与全局状态：缓存页面节点，记录当前分类、选中条目、导入数据和搜索索引。
+ * 2. 本地缓存与导入：读取 zip / 文件夹，解析 JSONC，并把解析结果存入 IndexedDB。
+ * 3. 原始配置解析：保留配置文件里的重复 key、注释、片段位置，用于展示更接近源码的解释。
+ * 4. 引用与跳转：把卡牌、仪式、事件、结局、计数器等 ID 解析成可点击的预览入口。
+ * 5. 可读化翻译：把 action / condition / settlement 里的游戏配置语法翻译成人话。
+ * 6. 渲染与交互：渲染列表、详情面板、移动端弹窗，并绑定搜索、横向滚动、提示气泡等事件。
+ *
+ * 作者：charleyz
+ * 创建时间：2026-04
+ */
 const generatedAt = document.querySelector("#generatedAt");
-const explorerList = document.querySelector("#explorerList");
+const explorerList = document.querySelector("#explorerList"); // 左侧列表
 const explorerMeta = document.querySelector("#explorerMeta");
-const detailPane = document.querySelector("#detailPane");
-const searchInput = document.querySelector("#searchInput");
+const detailPane = document.querySelector("#detailPane"); // 右侧详情
+const searchInput = document.querySelector("#searchInput"); // 顶部搜索框
 const exactMatchInput = document.querySelector("#exactMatchInput");
 const tabs = [...document.querySelectorAll(".tab")];
 const tabsBar = document.querySelector(".tabs");
@@ -26,12 +39,11 @@ const appVersion = document.querySelector("#appVersion");
 const hero = document.querySelector(".hero");
 const heroStatus = document.querySelector(".hero__status");
 const heroStatusToggle = document.querySelector("#heroStatusToggle");
-const pageShell = document.querySelector(".page-shell");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.2.4";
-const APP_UPDATED_AT = "2026-05-30";
+const APP_VERSION = "v0.2.5";
+const APP_UPDATED_AT = "2026-11-16";
 
-let currentTab = "all";
+let currentTab = "all"; // currentXxx: 用户现在看什么
 let currentCardFilter = "all";
 let currentRiteFilter = "all";
 let selectedKey = null;
@@ -45,22 +57,31 @@ let importFolderBtn = null;
 let clearCacheBtn = null;
 let mobileDetailModalHistory = [];
 let cardPreviewHistory = [];
-let searchIndexCache = new WeakMap();
+let searchIndexCache = new WeakMap(); // 给对象做缓存,并且自动回收内存
 let searchRenderTimer = null;
 
-const mobileMq = window.matchMedia("(max-width: 900px)");
+const mobileMq = window.matchMedia("(max-width: 900px)"); // 屏幕宽度小于900px时使用手机端样式
 const CACHE_DB_NAME = "sultan-config-reader";
 const CACHE_STORE_NAME = "cache";
 const CACHE_KEY = "site-data";
 const CACHE_SCHEMA_VERSION = 1;
 
+/**
+ * 将 ISO 时间字符串转换为中文日期时间格式
+ */
 const formatDateTime = (isoString) =>
   new Date(isoString).toLocaleString("zh-CN", {
     hour12: false,
   });
 
+/**
+ * 给一个条目生成“唯一选中 key”
+ */
 const itemSelectionKey = (item) => `${item?.kind || "unknown"}:${item?.id ?? "unknown"}`;
 
+/**
+ * 按需加载 JSZip：静态页面首次导入 zip 时才插入脚本，避免初始页面多加载依赖
+ */
 const ensureJsZip = async () => {
   if (window.JSZip) return window.JSZip;
   await new Promise((resolve, reject) => {
@@ -73,6 +94,9 @@ const ensureJsZip = async () => {
   return window.JSZip;
 };
 
+/**
+ * 打开 IndexedDB 缓存库，并在首次访问时创建保存导入数据的对象仓库
+ */
 const openCacheDb = () =>
   new Promise((resolve, reject) => {
     const request = indexedDB.open(CACHE_DB_NAME, 1);
@@ -83,6 +107,9 @@ const openCacheDb = () =>
     request.onerror = () => reject(request.error);
   });
 
+/**
+ * 把解析后的站点数据或元信息写入 IndexedDB，供下次打开页面自动恢复
+ */
 const cacheSet = async (key, value) => {
   const db = await openCacheDb();
   await new Promise((resolve, reject) => {
@@ -94,6 +121,9 @@ const cacheSet = async (key, value) => {
   db.close();
 };
 
+/**
+ * 从 IndexedDB 读取缓存
+ */
 const cacheGet = async (key) => {
   const db = await openCacheDb();
   const value = await new Promise((resolve, reject) => {
@@ -106,6 +136,9 @@ const cacheGet = async (key) => {
   return value;
 };
 
+/**
+ * 删除缓存，用于用户点击“清除本地数据”后重置阅读器状态
+ */
 const cacheDelete = async (key) => {
   const db = await openCacheDb();
   await new Promise((resolve, reject) => {
@@ -117,6 +150,9 @@ const cacheDelete = async (key) => {
   db.close();
 };
 
+/**
+ * 导入过程中禁用按钮，避免用户重复点击
+ */
 const setImportBusy = (busy) => {
   [importZipBtn, importFolderBtn, clearCacheBtn].forEach((button) => {
     if (button) button.disabled = busy;
@@ -130,8 +166,14 @@ const escapeHtml = (value) =>
     .replaceAll(">", "&gt;");
 
 const namePlaceholderMap = translationData.namePlaceholderMap || {};
+/**
+ * 占位符翻译
+ */
 const renderNamePlaceholder = (match) => namePlaceholderMap[match] || match;
 
+/**
+ * 配置文本转HTML，名字/性别占位符替换，字号不保留，颜色/字距保留
+ */
 const renderRichText = (value) =>
   escapeHtml(value || "")
     .replace(/\b(?:table\.[^.。\s]+|xiaochou|player)\.name\b/g, renderNamePlaceholder)
@@ -149,11 +191,23 @@ const renderRichText = (value) =>
       (_match, spacing, inner) => `<span style="letter-spacing:${spacing}">${inner}</span>`,
     );
 
+/**
+ * 显示 ID + 名称
+ */
 const renderRichTitle = (id, label) => `${escapeHtml(String(id))} · ${renderRichText(label || "")}`;
 
+/**
+ * JSON显示格式
+ */
 const jsonBlock = (value) => `<pre>${escapeHtml(typeof value === "string" ? value : JSON.stringify(value, null, 2))}</pre>`;
+/**
+ * 原始配置显示区域
+ */
 const rawConfigBlock = (item) => `<div class="raw-config-block">${jsonBlock(item?.rawSource || item?.raw || item)}</div>`;
 
+/**
+ * 移除 JSONC 中的行注释和块注释，同时保留字符串里（非注释）的 // 或 /* 文本。
+ */
 const stripJsonComments = (input) => {
   let out = "";
   let inString = false;
@@ -185,9 +239,9 @@ const stripJsonComments = (input) => {
       out += current;
       if (escaped) {
         escaped = false;
-      } else if (current === "\\") {
+      } else if (current === "\\") { // 如 \\n
         escaped = true;
-      } else if (current === "\"") {
+      } else if (current === "\"") { // 如 \"
         inString = false;
       }
       continue;
@@ -217,10 +271,19 @@ const stripJsonComments = (input) => {
   return out;
 };
 
+/**
+ * 删除对象和数组最后一个元素后面的逗号，让宽松 JSONC 能交给 JSON.parse
+ */
 const stripTrailingCommas = (input) => input.replace(/,\s*([}\]])/g, "$1");
+/**
+ * 把游戏配置常见的 JSONC 文本解析成JS对象
+ */
 const parseJsoncText = (input) => JSON.parse(stripTrailingCommas(stripJsonComments(input)));
 
-const findMatchingBrace = (input, startIndex) => {
+/**
+ * 从给定位置寻找匹配的成对符号，并跳过字符串里的同类字符
+ */
+const findMatchingPair = (input, startIndex, openChar, closeChar) => {
   let depth = 0;
   let inString = false;
   let escaped = false;
@@ -236,8 +299,8 @@ const findMatchingBrace = (input, startIndex) => {
       inString = true;
       continue;
     }
-    if (current === "{") depth += 1;
-    if (current === "}") {
+    if (current === openChar) depth += 1;
+    if (current === closeChar) {
       depth -= 1;
       if (depth === 0) return i;
     }
@@ -245,55 +308,47 @@ const findMatchingBrace = (input, startIndex) => {
   return -1;
 };
 
-const findMatchingBracket = (input, startIndex) => {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = startIndex; i < input.length; i += 1) {
-    const current = input[i];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (current === "\\") escaped = true;
-      else if (current === "\"") inString = false;
-      continue;
-    }
-    if (current === "\"") {
-      inString = true;
-      continue;
-    }
-    if (current === "[") depth += 1;
-    if (current === "]") {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
-  }
-  return -1;
-};
+/**
+ * 从给定位置寻找匹配的大括号，用于从原始文本截取对象片段
+ */
+const findMatchingBrace = (input, startIndex) => findMatchingPair(input, startIndex, "{", "}");
 
+/**
+ * 从给定位置寻找匹配的中括号，用于从原始文本截取数组片段
+ */
+const findMatchingBracket = (input, startIndex) => findMatchingPair(input, startIndex, "[", "]");
+
+/**
+ * 读取当前对象顶层的指定对象字段，并保留这些字段对象内部的重复 key
+ */
 const extractRepeatedObjectEntries = (raw, fieldName) => {
-  const cleaned = stripTrailingCommas(stripJsonComments(raw));
-  const marker = `"${fieldName}"`;
-  const markerIndex = cleaned.indexOf(marker);
-  if (markerIndex < 0) return [];
-  const braceStart = cleaned.indexOf("{", markerIndex);
-  if (braceStart < 0) return [];
-  const braceEnd = findMatchingBrace(cleaned, braceStart);
-  if (braceEnd < 0) return [];
-  return extractObjectEntriesFromSnippet(cleaned.slice(braceStart, braceEnd + 1));
+  const fieldEntries = extractObjectEntriesFromSnippet(raw).filter(
+    (entry) => entry.key === fieldName && entry.rawValueSnippet?.trim().startsWith("{"),
+  );
+  return fieldEntries.flatMap((entry) => extractObjectEntriesFromSnippet(entry.rawValueSnippet));
 };
 
+/**
+ * 把一个对象源码片段拆成按原顺序排列的 key/value 条目，供可读化展示使用
+ */
 const extractObjectEntriesFromSnippet = (rawSnippet) => {
   const cleaned = stripTrailingCommas(stripJsonComments(rawSnippet || ""));
+
+  // 去掉最外层 {}
   const braceStart = cleaned.indexOf("{");
   if (braceStart < 0) return [];
   const braceEnd = findMatchingBrace(cleaned, braceStart);
   if (braceEnd < 0) return [];
   const body = cleaned.slice(braceStart + 1, braceEnd);
+
+  // 逐个扫描字段
   const entries = [];
   let index = 0;
   while (index < body.length) {
-    while (index < body.length && /[\s,]/.test(body[index])) index += 1;
-    if (index >= body.length || body[index] !== "\"") break;
+    while (index < body.length && /[\s,]/.test(body[index])) index += 1; // 跳过空白和逗号
+    if (index >= body.length || body[index] !== "\"") break; // 确认 key 的开头 "
+
+    // 找到 key 的结束 "
     let keyEnd = index + 1;
     let escaped = false;
     while (keyEnd < body.length) {
@@ -303,61 +358,59 @@ const extractObjectEntriesFromSnippet = (rawSnippet) => {
       else if (char === "\"") break;
       keyEnd += 1;
     }
+
     const keySnippet = body.slice(index, keyEnd + 1);
     const key = JSON.parse(keySnippet);
+
     index = keyEnd + 1;
     while (index < body.length && /\s/.test(body[index])) index += 1;
-    if (body[index] !== ":") break;
+    if (body[index] !== ":") break; // 跳到冒号后面
     index += 1;
-    while (index < body.length && /\s/.test(body[index])) index += 1;
+    while (index < body.length && /\s/.test(body[index])) index += 1; // 跳到值的开头
+  
     const valueStart = index;
-    let valueEnd = index;
-    const startChar = body[index];
-    if (startChar === "{") {
-      const bodyOffset = braceStart + 1;
-      const absoluteStart = bodyOffset + valueStart;
-      const absoluteEnd = findMatchingBrace(cleaned, absoluteStart);
-      if (absoluteEnd < 0) break;
-      valueEnd = absoluteEnd - bodyOffset + 1;
-    } else if (startChar === "[") {
-      const bodyOffset = braceStart + 1;
-      const absoluteStart = bodyOffset + valueStart;
-      const absoluteEnd = findMatchingBracket(cleaned, absoluteStart);
-      if (absoluteEnd < 0) break;
-      valueEnd = absoluteEnd - bodyOffset + 1;
-    } else if (startChar === "\"") {
-      valueEnd += 1;
-      let escapedString = false;
-      while (valueEnd < body.length) {
-        const char = body[valueEnd];
-        if (escapedString) escapedString = false;
-        else if (char === "\\") escapedString = true;
-        else if (char === "\"") {
-          valueEnd += 1;
-          break;
+    const valueEnd = scanJsonValueEnd(body, valueStart);
+    if (valueEnd <= valueStart) {
+      console.warn(
+        "无法确定 JSON 值结束位置",
+        {
+          valueStart,
+          body: body.slice(valueStart, valueStart + 50),
         }
-        valueEnd += 1;
-      }
-    } else {
-      while (valueEnd < body.length && body[valueEnd] !== ",") valueEnd += 1;
+      );
+      break;
     }
-    const rawValueSnippet = body.slice(valueStart, valueEnd).trim();
+    const rawValueSnippet = body.slice(valueStart, valueEnd).trim(); // 保留原文
+  
     try {
       entries.push({ key, value: JSON.parse(rawValueSnippet), rawValueSnippet });
-    } catch {}
+    } catch (error) {
+      console.warn("解析对象字段失败", { key, rawValueSnippet, error });
+    }
     index = valueEnd;
   }
   return entries;
 };
 
+/**
+ * 在源码文本里扫描一个 JSON 值的结束位置，支持字符串、对象、数组和原始值
+ */
 const scanJsonValueEnd = (input, startIndex) => {
+  // 跳过开头空白
   let index = startIndex;
   while (index < input.length && /\s/.test(input[index])) index += 1;
   if (index >= input.length) return index;
+
   const first = input[index];
-  if (first === "{") return findMatchingBrace(input, index) + 1;
-  if (first === "[") return findMatchingBracket(input, index) + 1;
-  if (first === "\"") {
+  if (first === "{") { // value 是对象
+    const end = findMatchingBrace(input, index);
+    return end < 0 ? input.length : end + 1;
+  }
+  if (first === "[") { // value 是数组
+    const end = findMatchingBracket(input, index);
+    return end < 0 ? input.length : end + 1;
+  }
+  if (first === "\"") { // value 是字符串
     let i = index + 1;
     let escaped = false;
     while (i < input.length) {
@@ -370,10 +423,13 @@ const scanJsonValueEnd = (input, startIndex) => {
     return i;
   }
   let i = index;
-  while (i < input.length && !/[,\]}]/.test(input[i])) i += 1;
+  while (i < input.length && !/[,\]}]/.test(input[i])) i += 1; // value 是原始值
   return i;
 };
 
+/**
+ * 从原始配置里按 key 抽取所有值，解决重复 key 被解析器覆盖的问题。
+ */
 const extractRepeatedKeyValues = (raw, keyName) => {
   const cleaned = stripTrailingCommas(stripJsonComments(raw || ""));
   const marker = `"${keyName}"`;
@@ -401,6 +457,9 @@ const extractRepeatedKeyValues = (raw, keyName) => {
   return values;
 };
 
+/**
+ * 把数组源码拆成顶层对象片段，避免被内部逗号或嵌套结构干扰。
+ */
 const splitTopLevelObjects = (arrayBody) => {
   const objects = [];
   let start = -1;
@@ -433,6 +492,9 @@ const splitTopLevelObjects = (arrayBody) => {
   return objects;
 };
 
+/**
+ * 从指定数组字段中提取每个对象的原始片段和解析值，用于 settlement 等区域。
+ */
 const extractFieldArrayEntries = (raw, fieldName) => {
   const cleaned = stripTrailingCommas(stripJsonComments(raw));
   const marker = `"${fieldName}"`;
@@ -452,6 +514,9 @@ const extractFieldArrayEntries = (raw, fieldName) => {
   }));
 };
 
+/**
+ * 提取顶层对象字段的源码片段，给条件、槽位等需要保留注释的功能使用。
+ */
 const extractTopLevelObjectSnippet = (raw, key) => {
   const cleaned = raw || "";
   const marker = `"${key}"`;
@@ -464,6 +529,9 @@ const extractTopLevelObjectSnippet = (raw, key) => {
   return cleaned.slice(markerIndex, braceEnd + 1);
 };
 
+/**
+ * 在数组源码中按 id 找到对应对象片段，常用于跳转后展示原始配置。
+ */
 const extractArrayObjectSnippetById = (raw, id) => {
   const cleaned = raw || "";
   const arrayStart = cleaned.indexOf("[");
@@ -685,6 +753,9 @@ const createEmptyCommentDictionary = (sourceRootPrefix = "") => ({
   extractedSources: {},
 });
 
+/**
+ * 扫描配置文件里的行尾注释，建立计数器、卡牌、仪式、事件等注释字典。
+ */
 const buildCommentDictionaryFromFileMap = (fileMap, sourceRootPrefix = "") => {
   const dictionary = createEmptyCommentDictionary(sourceRootPrefix);
 
@@ -868,6 +939,9 @@ const summarizeSlots = (slots = {}, rawSlotEntries = []) =>
     };
   });
 
+/**
+ * 导入核心：从文件映射读取各目录 JSON，规范化为页面可渲染的统一数据。
+ */
 const buildSiteDataFromFileMap = (fileMap) => {
   const paths = [...fileMap.keys()];
   const rootPrefix = detectConfigRoot(paths);
@@ -1166,7 +1240,11 @@ const collectNumericRefs = (value, refs = new Set()) => {
     if (!value || typeof value !== "object") {
       return refs;
     }
+  ["conditionEntries", "actionEntries", "resultEntries"].forEach((entryKey) => {
+    if (Array.isArray(value[entryKey])) collectNumericRefs(value[entryKey], refs);
+  });
   Object.entries(value).forEach(([key, nested]) => {
+    if (key === "conditionEntries" || key === "actionEntries" || key === "resultEntries") return;
     const keyNumber = Number(key);
     if (Number.isFinite(keyNumber) && keyNumber >= 2000000) {
       refs.add(keyNumber);
@@ -1185,7 +1263,11 @@ const collectCardRefsFromKeys = (value, refs = new Set()) => {
     return refs;
   }
   if (!value || typeof value !== "object") return refs;
+  ["conditionEntries", "actionEntries", "resultEntries"].forEach((entryKey) => {
+    if (Array.isArray(value[entryKey])) collectCardRefsFromKeys(value[entryKey], refs);
+  });
   Object.entries(value).forEach(([key, nested]) => {
+    if (key === "conditionEntries" || key === "actionEntries" || key === "resultEntries") return;
     const stateMatch = key.match(/^(?:!?)(?:have|table_have|hand_have)\.([^.]+)(?:\.|$)/);
     if (stateMatch) {
       const target = resolveCardTargetByToken(stateMatch[1]);
@@ -2017,6 +2099,9 @@ const renderDelayActionBlock = (value, rawValueSnippet, prefix, rawSource = "") 
   return `${prefix}：延迟${roundText}执行${delayedLines.length ? `：${delayedLines.join("；")}` : ""}`;
 };
 
+/**
+ * 把 action/result 中的键值动作翻译成中文说明，是阅读器最核心的翻译函数之一。
+ */
 const summarizeMutationEntries = (action = {}, prefix = "动作", rawSource = "") => {
   const entries = [];
   const actionEntries = normalizeMutationEntries(action);
@@ -2743,6 +2828,9 @@ const formatFormulaExpressionHtml = (expression, rawSource = "") => {
     .join("");
 };
 
+/**
+ * 把 condition 条件键翻译成人话，处理 table_have、have、counter、公式等特殊语法。
+ */
 const conditionRuleHtml = (key, value, rawSource = "") => {
   const conditionEntityHtml = (token) => /^\d+$/.test(String(token)) ? entityLabelHtml(token) : escapeHtml(token);
   const cardLabel = (id, prefix = "", suffix = "") => `${prefix}${conditionEntityHtml(id)}${suffix}`;
@@ -3470,7 +3558,7 @@ const setupImportUi = () => {
     indices = null;
     resetSearchIndex();
     generatedAt.textContent = "";
-    renderSummary();
+    renderNavigationStats();
     explorerMeta.textContent = "尚未导入本地配置数据";
     explorerList.innerHTML = "";
     detailPane.innerHTML = `<div class="detail-pane__empty">先导入本地配置数据，然后从左侧选择一条配置查看详情。</div>`;
@@ -3593,7 +3681,7 @@ const hydrateSiteData = async (data, sourceLabel, fingerprint, importFingerprint
   resetSearchIndex();
   setImportStatus("正在写入本地缓存…");
   await cacheSet(CACHE_KEY, buildCachePayload({ data, fingerprint, importFingerprint, sourceLabel }));
-  renderSummary();
+  renderNavigationStats();
   renderExplorer();
   setImportStatus(`已载入本地数据：${sourceLabel}`);
 };
@@ -3655,6 +3743,9 @@ const riteFilterCounts = () => ({
   TREASURE: (siteData?.rites || []).filter((item) => item.type === "TREASURE").length,
 });
 
+/**
+ * 设置导航按钮显示结构：标签名 (数量)
+ */
 const setNavigationLabel = (node, label, count) => {
   const labelNode = Object.assign(document.createElement("span"), {
     className: "nav-label",
@@ -3736,26 +3827,36 @@ const bindDragScroll = (node) => {
   );
 };
 
+/**
+ * 重新计算导航栏底部指示线的位置和宽度，指示线跟随当前激活标签的文字
+ */
 const updateTabsIndicator = () => {
   if (!tabsBar) return;
-  const activeTab = tabs.find((node) => node.classList.contains("is-active"));
+  const activeTab = tabs.find((node) => node.classList.contains("is-active")); // 全部
   const label = activeTab?.querySelector(".nav-label");
   if (!activeTab || !label) {
     tabsBar.style.setProperty("--tabs-indicator-left", "0px");
     tabsBar.style.setProperty("--tabs-indicator-width", "0px");
     return;
   }
-  const width = label.offsetWidth * 0.72;
+  const width = label.offsetWidth * 0.72; // 根据元素实际宽度计算指示横线宽度
   const left = activeTab.offsetLeft + label.offsetLeft + (label.offsetWidth - width) / 2;
-  tabsBar.style.setProperty("--tabs-indicator-left", `${left}px`);
+  tabsBar.style.setProperty("--tabs-indicator-left", `${left}px`); // 写入CSS变量
   tabsBar.style.setProperty("--tabs-indicator-width", `${width}px`);
 };
 
+/**
+ * 下一帧更新导航指示线，避免在DOM尚未完成重排时，读取错误的元素实际宽度
+ */
 const queueTabsIndicatorUpdate = () => {
   requestAnimationFrame(updateTabsIndicator);
 };
 
-const renderSummary = () => {
+/**
+ * 根据当前导入的数据，刷新导航栏统计
+ */
+const renderNavigationStats = () => {
+  // 更新一级分类名称和数量
   const counts = navigationCounts();
   const tabLabels = {
     all: "全部",
@@ -3769,19 +3870,24 @@ const renderSummary = () => {
   };
   tabs.forEach((tab) => setNavigationLabel(tab, tabLabels[tab.dataset.target] || tab.textContent, counts[tab.dataset.target] || 0));
 
+  // 更新卡牌二级分类名称和数量
   const cardCounts = cardFilterCounts();
   const cardLabels = { all: "全部卡牌", sudan: "苏丹卡", item: "物品", char: "角色" };
   cardSubtabsButtons.forEach((tab) =>
     setNavigationLabel(tab, cardLabels[tab.dataset.cardFilter] || tab.textContent, cardCounts[tab.dataset.cardFilter] || 0),
   );
 
+  // 更新仪式二级分类名称和数量
   const riteCounts = riteFilterCounts();
   const riteLabels = { all: "全部仪式", TREASURE: "奇珍" };
   riteSubtabsButtons.forEach((tab) =>
     setNavigationLabel(tab, riteLabels[tab.dataset.riteFilter] || tab.textContent, riteCounts[tab.dataset.riteFilter] || 0),
   );
 
+  // 更新数据生成时间
   generatedAt.textContent = siteData ? `数据生成时间：${formatDateTime(siteData.generatedAt)}` : "";
+
+  // 更新当前 tab 下划线位置
   queueTabsIndicatorUpdate();
 };
 
@@ -3908,6 +4014,9 @@ const kindTagHtml = (kind) => {
   return label ? `<span class="pill">${escapeHtml(label)}</span>` : "";
 };
 
+/**
+ * 判断条目是否匹配当前搜索条件，尽量复用预建索引以降低输入时的卡顿。
+ */
 const matches = (entry, keyword) => {
   if (!keyword) return true;
   const normalizedKeyword = keyword.toLowerCase();
@@ -4052,16 +4161,24 @@ const renderCardDetailHtml = (item, { includeRaw = true } = {}) => {
   `;
 };
 
+/**
+ * 渲染仪式详情页，整合提示、卡槽、开放条件、前置结算、结算规则和跳转信息。
+ */
 const renderRiteDetailHtml = (item, { includeRaw = true } = {}) => {
   ensureCommentDictionaryForItem(item);
   const { nextRites, nextEvents } = buildJumpTargets(item.raw || {}, item.rawSource || "", item.nextRiteIds || [], item.nextEventIds || []);
   const nextEndings = buildEndingTargets(item.raw || {}, item.rawSource || []);
   const cardRefs = collectConditionCardRefs({
     cards_slot: item.raw?.cards_slot || {},
+    open_condition_entries: item.openConditions?.map((entry) => entry.conditionEntries || []) || [],
     open_conditions: item.raw?.open_conditions || [],
+    settlement_prior_entries: item.settlementPriorEntries || [],
     settlement_prior: item.raw?.settlement_prior || [],
+    settlement_entries: item.settlementEntries || [],
     settlement: item.raw?.settlement || [],
+    settlement_extre_entries: item.settlementExtreEntries || [],
     settlement_extre: item.raw?.settlement_extre || [],
+    waiting_round_end_entries: item.waitingRoundEndEntries || [],
     waiting_round_end_action: item.raw?.waiting_round_end_action || [],
   });
   const counterRefs = [...collectCounterRefs(item.raw || {})].sort((a, b) => Number(a) - Number(b));
@@ -4560,17 +4677,25 @@ const renderAfterStoryDetailHtml = (item, { includeRaw = true } = {}) => {
   `;
 };
 
+/**
+ * 渲染事件详情页，整合触发时机、条件、结算、后续跳转和原始配置。
+ */
 const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
   ensureCommentDictionaryForItem(item);
   const { nextRites, nextEvents } = buildJumpTargets(item.raw || {}, item.rawSource || "", item.nextRiteIds || [], item.nextEventIds || []);
   const nextEndings = buildEndingTargets(item.raw || {}, item.rawSource || []);
   const cardRefs = collectConditionCardRefs({
-    on: item.raw?.on || {},
     onEntries: item.onEntries || [],
+    on: item.raw?.on || {},
+    condition_entries: item.conditionEntries || [],
     condition: item.raw?.condition || {},
+    settlement_prior_entries: item.settlementPriorEntries || [],
     settlement_prior: item.raw?.settlement_prior || [],
+    settlement_entries: item.settlementEntries || [],
     settlement: item.raw?.settlement || [],
+    settlement_extre_entries: item.settlementExtreEntries || [],
     settlement_extre: item.raw?.settlement_extre || [],
+    waiting_round_end_entries: item.waitingRoundEndEntries || [],
   });
   const counterRefs = [...collectCounterRefs(item.raw || {})].sort((a, b) => Number(a) - Number(b));
   const triggerBlock = normalizeTriggerEntries(item.onEntries || item.on);
@@ -4684,7 +4809,14 @@ const renderEventDetailHtml = (item, { includeRaw = true } = {}) => {
   `;
 };
 
+/**
+ * 渲染详情页
+ *
+ * 根据当前选中条目生成 HTML，
+ * 并刷新右侧详情面板。
+ */
 const renderDetail = (item) => {
+  // 没有选中对象时显示提示
   if (!item) {
     detailPane.innerHTML = `<div class="detail-pane__empty">从左侧选一条配置，查看详细信息和原始对象。</div>`;
     return;
@@ -4693,6 +4825,7 @@ const renderDetail = (item) => {
   const kind = item.kind || currentTab;
 
   if (kind === "cards") {
+    // 更新页面
     detailPane.innerHTML = renderCardDetailHtml(item);
     syncDetailToModal();
     bindJumpEvents();
@@ -4763,6 +4896,9 @@ const listCardTitleHtml = (item) => {
   return renderRichTitle(item.id, item.name);
 };
 
+/**
+ * 主列表渲染入口：根据当前标签、子分类、搜索关键词和选中状态刷新列表与详情。
+ */
 const renderExplorer = () => {
   if (cardSubtabs) {
     cardSubtabs.hidden = currentTab !== "cards";
@@ -4860,12 +4996,25 @@ const renderExplorer = () => {
     explorerList.appendChild(node);
   });
 
-  renderDetail(items.find((item) => itemSelectionKey(item) === selectedKey) || null);
+  renderDetail(items.find((item) => itemSelectionKey(item) === selectedKey) || null); //?把当前选中的东西显示到右边详情页
 };
 
 const scheduleRenderExplorer = () => {
   window.clearTimeout(searchRenderTimer);
   searchRenderTimer = window.setTimeout(renderExplorer, 120);
+};
+
+const closeInfoTips = (exceptNode = null) => {
+  document.querySelectorAll(".info-tip.is-open").forEach((node) => {
+    if (node !== exceptNode) node.classList.remove("is-open");
+  });
+};
+
+const toggleInfoTip = (tipNode) => {
+  const willOpen = !tipNode.classList.contains("is-open");
+  closeInfoTips(tipNode);
+  tipNode.classList.toggle("is-open", willOpen);
+  if (!willOpen) tipNode.blur();
 };
 
 tabs.forEach((tab) => {
@@ -4914,18 +5063,39 @@ cardPreviewBackdrop?.addEventListener("click", closeCardPreview);
 cardPreviewBack?.addEventListener("click", goBackCardPreview);
 cardPreviewClose?.addEventListener("click", closeCardPreview);
 scrollTopBtn?.addEventListener("click", scrollToTop);
+document.addEventListener("click", (event) => {
+  const tipNode = event.target.closest?.(".info-tip");
+  if (tipNode) {
+    event.preventDefault();
+    toggleInfoTip(tipNode);
+    return;
+  }
+  closeInfoTips();
+});
+document.addEventListener("keydown", (event) => {
+  const tipNode = event.target.closest?.(".info-tip");
+  if (tipNode && (event.key === "Enter" || event.key === " ")) {
+    event.preventDefault();
+    toggleInfoTip(tipNode);
+    return;
+  }
+  if (event.key === "Escape") closeInfoTips();
+});
 window.addEventListener("scroll", updateScrollTopButton, { passive: true });
 window.addEventListener("resize", queueTabsIndicatorUpdate);
 
 searchInput.addEventListener("input", scheduleRenderExplorer);
 exactMatchInput?.addEventListener("change", scheduleRenderExplorer);
 
+/**
+ * 页面启动入口：初始化导入控件、恢复缓存、创建索引并完成第一次渲染。
+ */
 const init = async () => {
   setupImportUi();
   const cachedPayload = normalizeCachedPayload(await cacheGet(CACHE_KEY));
   siteData = window.SITE_DATA || cachedPayload?.data || null;
   if (!siteData) {
-    renderSummary();
+    renderNavigationStats();
     explorerMeta.textContent = "尚未导入本地配置数据";
     detailPane.innerHTML = `<div class="detail-pane__empty">先导入本地配置数据，然后从左侧选择一条配置查看详情。</div>`;
     setImportStatus("尚未导入本地配置数据。可导入 config.zip 或配置文件夹。");
@@ -4933,7 +5103,7 @@ const init = async () => {
   }
   indices = createIndices();
   resetSearchIndex();
-  renderSummary();
+  renderNavigationStats();
   renderExplorer();
   setImportStatus(
     window.SITE_DATA

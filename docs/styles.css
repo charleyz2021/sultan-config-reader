@@ -979,6 +979,8 @@ body {
   overflow-y: auto;
   padding-right: 4px;
   scrollbar-color: rgba(214, 182, 110, 0.28) rgba(12, 8, 6, 0.45);
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 
 .raw-config-block pre {
@@ -1324,11 +1326,16 @@ body {
   transition: opacity 120ms ease, transform 120ms ease;
 }
 
-.info-tip:hover::after,
-.info-tip:focus::after,
-.info-tip:active::after {
+.info-tip.is-open::after {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .info-tip:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
 }
 
 .detail-pane__summary,
