@@ -241,20 +241,50 @@ body {
   align-items: center;
   justify-content: center;
   min-height: 44px;
-  padding: 0 18px;
+  padding: 0 22px;
   border-radius: 999px;
-  background: linear-gradient(180deg, #e5cb88, #ba9350);
-  color: #11130f;
+  border: 1px solid rgba(198, 162, 82, 0.78);
+  background:
+    linear-gradient(180deg, rgba(42, 14, 10, 0.96), rgba(8, 3, 2, 0.98));
+  color: var(--accent-2);
   text-decoration: none;
   font-weight: 700;
-  border: 1px solid rgba(240, 221, 165, 0.22);
-  box-shadow: inset 0 1px 0 rgba(255, 240, 195, 0.45);
+  box-shadow:
+    inset 0 0 0 2px rgba(74, 47, 20, 0.72),
+    inset 0 1px 0 rgba(255, 235, 174, 0.16),
+    0 4px 12px rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
 .button--ghost {
-  background: var(--surface-black);
+  background: linear-gradient(180deg, rgba(25, 8, 6, 0.96), rgba(6, 2, 2, 0.98));
   color: var(--accent);
-  border: 1px solid var(--line);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .button:hover {
+    transform: translateY(-2px);
+    border-color: rgba(252, 226, 154, 0.96);
+    background: linear-gradient(180deg, rgba(69, 21, 14, 0.98), rgba(15, 5, 3, 0.99));
+    color: #fff0bf;
+    box-shadow:
+      inset 0 0 0 2px rgba(128, 83, 31, 0.72),
+      inset 0 1px 0 rgba(255, 240, 195, 0.24),
+      0 7px 18px rgba(0, 0, 0, 0.32);
+  }
+}
+
+.button:active {
+  transform: translateY(0);
+  box-shadow:
+    inset 0 2px 5px rgba(0, 0, 0, 0.52),
+    inset 0 0 0 2px rgba(128, 83, 31, 0.62);
+}
+
+.button:focus-visible {
+  outline: 2px solid rgba(252, 226, 154, 0.7);
+  outline-offset: 3px;
 }
 
 .layout {
@@ -503,7 +533,7 @@ body {
 .search-box {
   display: flex;
   align-items: center;
-  width: min(460px, 100%);
+  width: min(520px, 100%);
   min-width: 0;
   margin-bottom: 22px;
 }
@@ -514,17 +544,37 @@ body {
   gap: 10px;
   flex: 1 1 auto;
   min-width: 0;
-  min-height: 44px;
-  padding: 0 14px;
-  border: 1px solid rgba(198, 162, 82, 0.22);
-  border-radius: 999px;
-  background: rgba(10, 4, 3, 0.38);
+  min-height: 48px;
+  padding: 0 16px;
+  border: 1px solid rgba(198, 162, 82, 0.58);
+  border-radius: 6px;
+  background: linear-gradient(180deg, rgba(8, 5, 4, 0.94), rgba(18, 6, 4, 0.98));
   color: var(--muted);
+  box-shadow:
+    inset 0 0 0 2px rgba(66, 43, 19, 0.58),
+    inset 0 4px 12px rgba(0, 0, 0, 0.42),
+    0 3px 10px rgba(0, 0, 0, 0.18);
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .search-field:hover {
+    border-color: rgba(252, 226, 154, 0.78);
+    background: linear-gradient(180deg, rgba(13, 8, 6, 0.96), rgba(30, 9, 6, 0.98));
+    box-shadow:
+      inset 0 0 0 2px rgba(112, 73, 27, 0.64),
+      inset 0 4px 12px rgba(0, 0, 0, 0.4),
+      0 5px 14px rgba(0, 0, 0, 0.24);
+  }
 }
 
 .search-field:focus-within {
-  border-color: rgba(198, 162, 82, 0.48);
-  background: rgba(10, 4, 3, 0.56);
+  border-color: rgba(252, 226, 154, 0.94);
+  background: linear-gradient(180deg, rgba(15, 9, 7, 0.98), rgba(34, 10, 7, 0.99));
+  box-shadow:
+    inset 0 0 0 2px rgba(145, 96, 37, 0.7),
+    inset 0 4px 12px rgba(0, 0, 0, 0.38),
+    0 0 0 3px rgba(198, 162, 82, 0.09);
 }
 
 .search-field__icon {
@@ -532,7 +582,21 @@ body {
   height: 20px;
   fill: currentColor;
   flex: 0 0 auto;
-  opacity: 0.78;
+  color: var(--accent);
+  opacity: 0.9;
+  transition: color 140ms ease, transform 140ms ease;
+}
+
+.search-field:focus-within .search-field__icon {
+  color: var(--accent-2);
+  transform: scale(1.08);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .search-field:hover .search-field__icon {
+    color: var(--accent-2);
+    transform: scale(1.08);
+  }
 }
 
 .search-toggle {
