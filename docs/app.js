@@ -40,7 +40,7 @@ const hero = document.querySelector(".hero");
 const heroStatus = document.querySelector(".hero__status");
 const heroStatusToggle = document.querySelector("#heroStatusToggle");
 const translationData = window.SULTAN_TRANSLATIONS || {};
-const APP_VERSION = "v0.2.7";
+const APP_VERSION = "v0.2.8";
 const APP_UPDATED_AT = "2026-11-19";
 
 let currentTab = "all"; // currentXxx: 用户现在看什么
